@@ -1,0 +1,28 @@
+[gh_product_stats_db_sync.database]
+    connectTimeout =
+
+[gh_product_stats_db_sync.database.databaseConfig]
+    user =
+    password =
+    database =
+    host =
+    port =
+
+[gh_product_stats_db_sync.database.databaseConfig.connectionPool]
+    maxOpenConnections =
+    maxConnectionLifeTime =
+    minIdleConnections =
+
+[gh_product_stats_db_sync.entity]
+    engEntityBaseUrl =
+
+[gh_product_stats_db_sync.entity.oauthConfig]
+    clientId =
+    clientSecret =
+    tokenUrl =
+
+[gh_product_stats_db_sync.entity.retryConfig]
+    count =
+    interval =
+    backOffFactor =
+    maxWaitInterval =
