@@ -21,6 +21,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net"
@@ -29,6 +30,10 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 )
+
+// pingTimeout bounds the startup connectivity check so a stalled network path
+// to MySQL fails fast instead of hanging New() forever.
+const pingTimeout = 10 * time.Second
 
 // Config holds the MySQL connection settings.
 type Config struct {
@@ -51,15 +56,18 @@ type Store struct {
 // validated with a Ping before returning.
 func New(cfg Config) (*Store, error) {
 	dsn := mysql.Config{
-		User:                 cfg.User,
-		Passwd:               cfg.Password,
-		Net:                  "tcp",
-		Addr:                 net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-		DBName:               cfg.Database,
-		ParseTime:            true,
-		Loc:                  time.UTC,
-		AllowNativePasswords: true,
-		Params:               map[string]string{"charset": "utf8mb4"},
+		User:   cfg.User,
+		Passwd: cfg.Password,
+		Net:    "tcp",
+		Addr:   net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		DBName: cfg.Database,
+		// ClientFoundRows makes RowsAffected() report rows MATCHED by the WHERE
+		// clause rather than rows actually changed, so a no-op UPDATE (e.g.
+		// re-deactivating an already-inactive repo) doesn't look like a missing row.
+		ClientFoundRows: true,
+		ParseTime:       true,
+		Loc:             time.UTC,
+		Params:          map[string]string{"charset": "utf8mb4"},
 	}
 
 	db, err := sql.Open("mysql", dsn.FormatDSN())
@@ -77,7 +85,9 @@ func New(cfg Config) (*Store, error) {
 		db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	}
 
-	if err := db.Ping(); err != nil {
+	pingCtx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: ping db: %w", err)
 	}

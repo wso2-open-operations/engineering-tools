@@ -36,6 +36,13 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run wires up and serves the app, returning the process exit code. Keeping
+// this separate from main lets deferred cleanup (st.Close, context cancels)
+// always run, since os.Exit from within main would skip them.
+func run() int {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()
 
@@ -52,7 +59,7 @@ func main() {
 	st, err := store.New(storeCfg)
 	if err != nil {
 		slog.Error("failed to connect to database", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	defer st.Close()
 
@@ -95,19 +102,26 @@ func main() {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		slog.Error("failed to bind", "addr", addr, "err", err)
-		os.Exit(1)
+		return 1
 	}
 	slog.Info("GitHub Stats Dashboard Backend started", "addr", addr)
 
-	// CORS is outermost so preflight OPTIONS is answered before Auth. Empty in
-	// production (the Choreo gateway owns CORS); set for local SPA development.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// CORS is nested inside SecurityHeaders so every response — including
+	// preflight OPTIONS and rejected-origin responses, which CORS answers
+	// directly without reaching the inner middleware — still gets the security
+	// headers. ctx cancels the JWKS background refresh goroutine on shutdown.
+	// Empty CORS origins is a no-op in production (the Choreo gateway owns CORS);
+	// set for local SPA development.
 	corsOrigins := splitComma(os.Getenv("CORS_ALLOWED_ORIGINS"))
 
 	srv := &http.Server{
-		Handler: middleware.CORS(corsOrigins)(
-			middleware.SecurityHeaders(
+		Handler: middleware.SecurityHeaders(
+			middleware.CORS(corsOrigins)(
 				middleware.CorrelationID(
-					middleware.Auth(authCfg)(
+					middleware.Auth(ctx, authCfg)(
 						middleware.Logger(mux),
 					),
 				),
@@ -119,26 +133,38 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
+	// serveErr carries an unexpected listener failure back to the main flow so
+	// shutdown (and this function's defers) still run through the normal path
+	// instead of the goroutine calling os.Exit directly.
+	serveErr := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			slog.Error("server exited", "err", err)
-			os.Exit(1)
+			serveErr <- err
+			return
 		}
+		serveErr <- nil
 	}()
 
-	<-ctx.Done()
-	stop()
+	exitCode := 0
+	select {
+	case <-ctx.Done():
+		stop()
+	case err := <-serveErr:
+		if err != nil {
+			slog.Error("server exited unexpectedly", "err", err)
+			exitCode = 1
+		}
+		stop()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "err", err)
-		os.Exit(1)
+		return 1
 	}
 	slog.Info("GitHub Stats Dashboard Backend stopped")
+	return exitCode
 }
 
 func mustEnv(key string) string {

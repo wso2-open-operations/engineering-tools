@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/engineering-tools/apps/gh-product-download-stats-dashboard/backend/internal/apierror"
@@ -202,12 +203,5 @@ func (s *Store) DeactivateRepository(ctx context.Context, id int) error {
 }
 
 func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ", "
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, ", ")
 }

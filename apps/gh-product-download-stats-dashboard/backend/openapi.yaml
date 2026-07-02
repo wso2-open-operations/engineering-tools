@@ -45,6 +45,7 @@ components:
         assetPrefixes:
           type: array
           items: { type: string }
+          maxItems: 50
         isActive: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -187,6 +188,7 @@ components:
         assetPrefixes:
           type: array
           items: { type: string }
+          maxItems: 50
         isActive: { type: boolean }
     RepositoryUpdate:
       type: object
@@ -195,6 +197,7 @@ components:
         assetPrefixes:
           type: array
           items: { type: string }
+          maxItems: 50
         isActive: { type: boolean }
     SyncLogsResponse:
       type: object
@@ -290,6 +293,7 @@ paths:
                   repositories:
                     type: array
                     items: { $ref: '#/components/schemas/RepositoryWithStats' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
@@ -302,6 +306,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Summary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
@@ -499,6 +504,7 @@ paths:
                   repositories:
                     type: array
                     items: { $ref: '#/components/schemas/RepositoryWithStats' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }
@@ -574,6 +580,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SyncLogsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalServerError' }

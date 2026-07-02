@@ -189,6 +189,134 @@ func TestGetMetric_Success(t *testing.T) {
 	}
 }
 
+func TestGetClones_BadDate(t *testing.T) {
+	h := NewStatsHandler(&mockStore{})
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/clones?from=not-a-date", nil), testUser)
+
+	h.GetClones(w, r)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assertErrorMessage(t, w, ErrMsgInvalidDate)
+}
+
+func TestGetClones_Success(t *testing.T) {
+	var gotFrom, gotTo string
+	var gotIDs []int
+	mock := &mockStore{
+		cloneFn: func(_ context.Context, from, to string, repoIDs []int) ([]store.CloneSeries, error) {
+			gotFrom, gotTo, gotIDs = from, to, repoIDs
+			return []store.CloneSeries{{RepoID: 1, RepoName: "product-apim", Points: []store.ClonePoint{{Date: "2026-06-25", Count: 10, Uniques: 5}}}}, nil
+		},
+	}
+	h := NewStatsHandler(mock)
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/clones?from=2026-06-01&to=2026-06-25&repos=1", nil), testUser)
+
+	h.GetClones(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	if gotFrom != "2026-06-01" || gotTo != "2026-06-25" || len(gotIDs) != 1 {
+		t.Errorf("store called with from=%s to=%s ids=%v", gotFrom, gotTo, gotIDs)
+	}
+	got := decodeJSON[cloneSeriesResponse](t, w)
+	if got.From != "2026-06-01" || got.To != "2026-06-25" || len(got.Series) != 1 {
+		t.Errorf("unexpected clones response: %+v", got)
+	}
+}
+
+func TestGetVersionSeries_BadRepoID(t *testing.T) {
+	h := NewStatsHandler(&mockStore{})
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/versions/abc/series", nil), testUser)
+	r.SetPathValue("repoId", "abc")
+
+	h.GetVersionSeries(w, r)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assertErrorMessage(t, w, ErrMsgInvalidRepo)
+}
+
+func TestGetVersionSeries_BadInterval(t *testing.T) {
+	h := NewStatsHandler(&mockStore{})
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/versions/7/series?interval=weekly", nil), testUser)
+	r.SetPathValue("repoId", "7")
+
+	h.GetVersionSeries(w, r)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assertErrorMessage(t, w, ErrMsgInvalidInterval)
+}
+
+func TestGetVersionSeries_Success(t *testing.T) {
+	var gotRepoID int
+	var gotInterval store.Interval
+	mock := &mockStore{
+		versionSeriesFn: func(_ context.Context, repoID int, _, _ string, interval store.Interval) ([]store.VersionSeries, error) {
+			gotRepoID, gotInterval = repoID, interval
+			return []store.VersionSeries{{ReleaseTag: "v1.0.0", Points: []store.TimeSeriesPoint{{Date: "2026-06-25", Value: 100}}}}, nil
+		},
+	}
+	h := NewStatsHandler(mock)
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/versions/7/series?interval=cumulative", nil), testUser)
+	r.SetPathValue("repoId", "7")
+
+	h.GetVersionSeries(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	if gotRepoID != 7 || gotInterval != store.IntervalCumulative {
+		t.Errorf("store called with repoID=%d interval=%s", gotRepoID, gotInterval)
+	}
+	got := decodeJSON[versionSeriesResponse](t, w)
+	if got.RepoID != 7 || got.Interval != "cumulative" || len(got.Series) != 1 {
+		t.Errorf("unexpected version series response: %+v", got)
+	}
+}
+
+func TestGetAssets_BadRepoID(t *testing.T) {
+	h := NewStatsHandler(&mockStore{})
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/assets/abc", nil), testUser)
+	r.SetPathValue("repoId", "abc")
+
+	h.GetAssets(w, r)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assertErrorMessage(t, w, ErrMsgInvalidRepo)
+}
+
+func TestGetAssets_Success(t *testing.T) {
+	var gotRepoID int
+	var gotVersion string
+	mock := &mockStore{
+		assetFn: func(_ context.Context, repoID int, _, _, version string) (*store.AssetBreakdown, error) {
+			gotRepoID, gotVersion = repoID, version
+			return &store.AssetBreakdown{
+				RepoID:       repoID,
+				SnapshotDate: "2026-06-25",
+				Assets:       []store.AssetBreakdownItem{{ReleaseTag: "v1.0.0", AssetName: "wso2am-4.3.0.zip", DownloadCount: 500}},
+			}, nil
+		},
+	}
+	h := NewStatsHandler(mock)
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/stats/assets/7?version=v1.0.0", nil), testUser)
+	r.SetPathValue("repoId", "7")
+
+	h.GetAssets(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	if gotRepoID != 7 || gotVersion != "v1.0.0" {
+		t.Errorf("store called with repoID=%d version=%q", gotRepoID, gotVersion)
+	}
+	got := decodeJSON[store.AssetBreakdown](t, w)
+	if got.RepoID != 7 || len(got.Assets) != 1 {
+		t.Errorf("unexpected asset breakdown: %+v", got)
+	}
+}
+
 func TestGetVersions_BadRepoID(t *testing.T) {
 	h := NewStatsHandler(&mockStore{})
 	w := httptest.NewRecorder()

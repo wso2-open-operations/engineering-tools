@@ -74,11 +74,12 @@ type jwtClaims struct {
 // Auth returns an HTTP middleware that validates the x-jwt-assertion header on
 // every request and stores the resulting UserInfo in the request context.
 // When Config.TokenValidatorEnabled is false the token is only decoded without
-// signature verification — safe for local development only.
-func Auth(cfg Config) func(http.Handler) http.Handler {
+// signature verification — safe for local development only. shutdownCtx ends
+// the JWKS background refresh goroutine when the server shuts down.
+func Auth(shutdownCtx context.Context, cfg Config) func(http.Handler) http.Handler {
 	var keyFunc jwt.Keyfunc
 	if cfg.TokenValidatorEnabled {
-		jwks, err := keyfunc.NewDefault([]string{cfg.JWKSEndpoint})
+		jwks, err := keyfunc.NewDefaultCtx(shutdownCtx, []string{cfg.JWKSEndpoint})
 		if err != nil {
 			// Misconfigured auth must not silently pass — fail at startup.
 			panic("auth: failed to initialise JWKS from " + cfg.JWKSEndpoint + ": " + err.Error())
@@ -88,8 +89,6 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			addSecurityHeaders(w)
-
 			// Skip auth for the health check endpoint.
 			if r.Method == http.MethodGet && r.URL.Path == "/health" {
 				next.ServeHTTP(w, r)
@@ -159,6 +158,7 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		}
 	} else {
 		token, err := jwt.ParseWithClaims(tokenStr, &c, keyFunc,
+			jwt.WithValidMethods([]string{"RS256"}),
 			jwt.WithIssuer(cfg.Issuer),
 			jwt.WithAudience(cfg.Audience),
 			jwt.WithLeeway(cfg.ClockSkew),
@@ -191,11 +191,4 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		UserID: userID,
 		Groups: c.Groups,
 	}, nil
-}
-
-// addSecurityHeaders mirrors the Ballerina ResponseInterceptor security headers.
-func addSecurityHeaders(w http.ResponseWriter) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "upgrade-insecure-requests")
-	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 }

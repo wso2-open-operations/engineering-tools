@@ -26,17 +26,32 @@ import (
 // allowedOrigins is empty it is a no-op — production runs behind the Choreo
 // gateway, which owns CORS; this is for local development (SPA on :3000 calling
 // the backend on :8080).
+//
+// A literal "*" in allowedOrigins is intentionally NOT combined with credentialed
+// headers: reflecting any Origin while also allowing credentials would let any
+// website make credentialed requests to this API. "*" is only ever sent as a
+// literal wildcard, uncredentialed; explicit origins get the full credentialed
+// response.
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-			allowed := origin != "" && len(allowedOrigins) > 0 &&
-				(slices.Contains(allowedOrigins, "*") || slices.Contains(allowedOrigins, origin))
+			// Always vary on Origin so shared caches don't mix cross-origin responses,
+			// regardless of whether this particular request's origin is allowed.
+			w.Header().Add("Vary", "Origin")
 
-			if allowed {
+			origin := r.Header.Get("Origin")
+			wildcard := slices.Contains(allowedOrigins, "*")
+			explicit := origin != "" && slices.Contains(allowedOrigins, origin)
+
+			switch {
+			case explicit:
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Add("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			case wildcard:
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+
+			if explicit || wildcard {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers",
 					"Authorization, Content-Type, Accept, x-jwt-assertion, x-user-id-token, X-GH-Stats-Correlation-ID")

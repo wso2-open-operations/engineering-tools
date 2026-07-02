@@ -53,9 +53,10 @@ func (s *Store) Summary(ctx context.Context) (*Summary, error) {
 
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT
-		   COALESCE(SUM(CASE WHEN snapshot_date >= (CURDATE() - INTERVAL 30 DAY) THEN clone_count ELSE 0 END), 0),
-		   COALESCE(SUM(CASE WHEN snapshot_date >= (CURDATE() - INTERVAL 13 DAY) THEN clone_count ELSE 0 END), 0)
-		 FROM repository_daily_snapshots`,
+		   COALESCE(SUM(CASE WHEN s.snapshot_date >= (CURDATE() - INTERVAL 29 DAY) THEN s.clone_count ELSE 0 END), 0),
+		   COALESCE(SUM(CASE WHEN s.snapshot_date >= (CURDATE() - INTERVAL 13 DAY) THEN s.clone_count ELSE 0 END), 0)
+		 FROM repository_daily_snapshots s
+		 JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1`,
 	).Scan(&sum.TotalClonesLast30d, &sum.TotalClonesLast14d); err != nil {
 		return nil, fmt.Errorf("store: summary clones: %w", err)
 	}

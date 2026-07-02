@@ -109,9 +109,9 @@ func TestCreateRepository_Success(t *testing.T) {
 	h.CreateRepository(w, r)
 
 	assertStatus(t, w, http.StatusCreated)
-	resp := decodeJSON[map[string]int](t, w)
-	if resp["id"] != 42 {
-		t.Errorf("id = %d, want 42", resp["id"])
+	resp := decodeJSON[createRepositoryResponse](t, w)
+	if resp.ID != 42 {
+		t.Errorf("id = %d, want 42", resp.ID)
 	}
 	if got.RepoName != "product-apim" || len(got.AssetPrefixes) != 1 {
 		t.Errorf("store received %+v", got)

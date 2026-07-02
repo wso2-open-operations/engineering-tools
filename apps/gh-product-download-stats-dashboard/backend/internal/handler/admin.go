@@ -106,6 +106,11 @@ func (h *AdminHandler) ListRepositories(w http.ResponseWriter, r *http.Request) 
 	writeJSONValue(w, http.StatusOK, adminRepositoriesResponse{Count: len(repos), Repositories: repos})
 }
 
+// createRepositoryResponse wraps the generated id of a newly created repository.
+type createRepositoryResponse struct {
+	ID int `json:"id"`
+}
+
 // CreateRepository handles POST /api/v1/admin/repositories.
 func (h *AdminHandler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 	user := h.requireAdmin(w, r)
@@ -130,7 +135,7 @@ func (h *AdminHandler) CreateRepository(w http.ResponseWriter, r *http.Request) 
 		mapStoreError(w, err, "Failed to create repository.")
 		return
 	}
-	writeJSONValue(w, http.StatusCreated, map[string]int{"id": id})
+	writeJSONValue(w, http.StatusCreated, createRepositoryResponse{ID: id})
 }
 
 // UpdateRepository handles PATCH /api/v1/admin/repositories/{id}.

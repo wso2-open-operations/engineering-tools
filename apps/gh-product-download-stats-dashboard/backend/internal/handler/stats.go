@@ -138,19 +138,8 @@ func (h *StatsHandler) GetMetric(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidMetric)
 		return
 	}
-	rng, valid := parseDateRange(r)
-	if !valid {
-		writeError(w, http.StatusBadRequest, ErrMsgInvalidDate)
-		return
-	}
-	repoIDs, ok := parseRepoIDs(r)
+	rng, repoIDs, interval, ok := h.parseSeriesParams(w, r)
 	if !ok {
-		writeError(w, http.StatusBadRequest, ErrMsgInvalidRepos)
-		return
-	}
-	interval, ok := store.ParseInterval(r.URL.Query().Get("interval"))
-	if !ok {
-		writeError(w, http.StatusBadRequest, ErrMsgInvalidInterval)
 		return
 	}
 

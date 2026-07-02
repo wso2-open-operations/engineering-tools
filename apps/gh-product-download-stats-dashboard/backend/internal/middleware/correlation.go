@@ -18,26 +18,31 @@ package middleware
 
 import (
 	"context"
-	"crypto/rand"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+
+	"github.com/google/uuid"
 )
 
 const correlationIDHeader = "X-GH-Stats-Correlation-ID"
 
+// maxCorrelationIDLen bounds client-supplied correlation IDs so an attacker
+// can't smuggle oversized or control-character-laden values into logs and the
+// echoed response header.
+const maxCorrelationIDLen = 64
+
 type correlationIDKey struct{}
 
 // CorrelationID is an HTTP middleware that reads the correlation-ID request
-// header or generates a UUID v4 if absent. The ID is:
+// header or generates a UUID v4 if absent or invalid. The ID is:
 //   - stored in the context for automatic inclusion in slog records
 //   - echoed in the response header so callers can reference it in support
 //     requests
 func CorrelationID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(correlationIDHeader)
-		if id == "" {
+		if !isValidCorrelationID(id) {
 			id = newCorrelationID()
 		}
 		w.Header().Set(correlationIDHeader, id)
@@ -53,14 +58,23 @@ func CorrelationIDFromContext(ctx context.Context) string {
 	return v
 }
 
-func newCorrelationID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("correlationid: failed to read random bytes: " + err.Error())
+// isValidCorrelationID bounds a client-supplied correlation ID to a length and
+// charset safe to log and echo back verbatim (alphanumeric plus -/_).
+func isValidCorrelationID(id string) bool {
+	if id == "" || len(id) > maxCorrelationIDLen {
+		return false
 	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	for _, c := range id {
+		isAlnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if !isAlnum && c != '-' && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func newCorrelationID() string {
+	return uuid.NewString()
 }
 
 // ctxHandler wraps a slog.Handler to automatically inject the correlation ID

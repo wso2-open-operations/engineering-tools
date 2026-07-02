@@ -168,8 +168,15 @@ snapshot; `totalClonesLast30d` sums `cloneCount` across the last 30 days.
   "totalStars": 19873,
   "totalForks": 6042,
   "totalClonesLast30d": 9123,
+  "totalClonesLast14d": 4310,
+  "todayDownloads": 1305,
+  "todayDeltaPct": 5.2,
+  "monthDownloads": 40218,
   "lastSyncDate": "2026-06-25T03:14:00Z",
-  "lastSyncStatus": "SUCCESS"
+  "lastSyncStatus": "SUCCESS",
+  "topProducts": [
+    { "repoId": 1, "repoName": "product-apim", "productName": "WSO2 API Manager", "todayDownloads": 1120, "totalDownloads": 90120, "stars": 2451 }
+  ]
 }
 ```
 
@@ -637,8 +644,15 @@ View the cron's sync job history, most recent first.
 | `totalStars` | integer | no |
 | `totalForks` | integer | no |
 | `totalClonesLast30d` | integer | no |
+| `totalClonesLast14d` | integer | no |
+| `todayDownloads` | integer (int64) | no |
+| `todayDeltaPct` | number | yes |
+| `monthDownloads` | integer (int64) | no |
 | `lastSyncDate` | string (RFC3339) | yes |
 | `lastSyncStatus` | string | yes |
+| `topProducts` | array of TopProduct | no |
+
+`TopProduct`: `repoId` (integer), `repoName` (string), `productName` (string, nullable), `todayDownloads` (integer int64), `totalDownloads` (integer int64), `stars` (integer).
 
 ### Series response wrapper (total, daily, metric)
 
