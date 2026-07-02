@@ -69,7 +69,7 @@ isolated function run() returns error? {
         }
     }
 
-    string status = reposFailed == 0 ? "SUCCESS" : (reposSynced == 0 ? "FAILED" : "PARTIAL_FAILURE");
+    database:SyncJobStatus status = reposFailed == 0 ? "SUCCESS" : (reposSynced == 0 ? "FAILED" : "PARTIAL_FAILURE");
     string? errorMessage = errors.length() == 0 ? () : string:'join("; ", ...errors);
     check database:completeSyncJob(jobId, status, reposSynced, reposFailed, errorMessage);
     log:printInfo("Sync job completed", status = status, reposSynced = reposSynced, reposFailed = reposFailed);

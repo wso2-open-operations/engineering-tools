@@ -41,6 +41,10 @@ type DatabaseClientConfig record {|
     mysql:Options? options;
 |};
 
+# Terminal status values for a `sync_job_logs` row. Mirrors the `sync_job_logs.status`
+# ENUM column (minus the transient `STARTED` value, which `startSyncJobQuery` sets directly).
+public type SyncJobStatus "SUCCESS"|"PARTIAL_FAILURE"|"FAILED";
+
 # An active row from the `tracked_repositories` table.
 #
 # + id - Primary key (used as `tracked_repo_id` foreign key in snapshots)

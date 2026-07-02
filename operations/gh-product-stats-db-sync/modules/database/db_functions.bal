@@ -44,7 +44,7 @@ public isolated function startSyncJob() returns int|error {
 # + reposFailed - Number of repositories that failed
 # + errorMessage - Aggregated error message (null if none)
 # + return - An error if the update fails
-public isolated function completeSyncJob(int jobId, string status, int reposSynced, int reposFailed,
+public isolated function completeSyncJob(int jobId, SyncJobStatus status, int reposSynced, int reposFailed,
         string? errorMessage) returns error? {
     _ = check databaseClient->execute(completeSyncJobQuery(jobId, status, reposSynced, reposFailed, errorMessage));
 }

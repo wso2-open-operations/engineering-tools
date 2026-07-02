@@ -50,7 +50,7 @@ isolated function startSyncJobQuery() returns sql:ParameterizedQuery =>
 # + reposFailed - Number of repositories that failed
 # + errorMessage - Aggregated error message (null if none)
 # + return - sql:ParameterizedQuery - Update query for the sync_job_logs table
-isolated function completeSyncJobQuery(int jobId, string status, int reposSynced, int reposFailed,
+isolated function completeSyncJobQuery(int jobId, SyncJobStatus status, int reposSynced, int reposFailed,
         string? errorMessage) returns sql:ParameterizedQuery =>
 `
     UPDATE sync_job_logs
