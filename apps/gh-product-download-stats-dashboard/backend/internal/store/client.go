@@ -45,6 +45,11 @@ type Config struct {
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
+	// TLSEnabled encrypts the connection (required — the stage/prod DB enforces
+	// require_secure_transport=ON and rejects plaintext connections outright).
+	// Uses "skip-verify" rather than strict cert validation since the DB is on a
+	// private VPC IP without a confirmed CA-signed certificate.
+	TLSEnabled bool
 }
 
 // Store wraps the database connection pool.
@@ -55,6 +60,10 @@ type Store struct {
 // New opens a connection pool to MySQL using the given config. The pool is
 // validated with a Ping before returning.
 func New(cfg Config) (*Store, error) {
+	tlsMode := "false"
+	if cfg.TLSEnabled {
+		tlsMode = "skip-verify"
+	}
 	dsn := mysql.Config{
 		User:   cfg.User,
 		Passwd: cfg.Password,
@@ -67,7 +76,12 @@ func New(cfg Config) (*Store, error) {
 		ClientFoundRows: true,
 		ParseTime:       true,
 		Loc:             time.UTC,
-		Params:          map[string]string{"charset": "utf8mb4"},
+		// Required: the stage/prod DB user (choreo_github_stat_rw_user) is
+		// provisioned with the legacy mysql_native_password auth plugin. Without
+		// this, the driver refuses the handshake with ErrNativePassword.
+		AllowNativePasswords: true,
+		TLSConfig:            tlsMode,
+		Params:               map[string]string{"charset": "utf8mb4"},
 	}
 
 	db, err := sql.Open("mysql", dsn.FormatDSN())

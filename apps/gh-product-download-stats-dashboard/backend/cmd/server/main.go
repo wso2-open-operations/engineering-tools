@@ -55,6 +55,7 @@ func run() int {
 		MaxOpenConns:    atoiOrDefault("DB_MAX_OPEN_CONNS", 10),
 		MaxIdleConns:    atoiOrDefault("DB_MAX_IDLE_CONNS", 5),
 		ConnMaxLifetime: time.Duration(atoiOrDefault("DB_CONN_MAX_LIFETIME_SECONDS", 180)) * time.Second,
+		TLSEnabled:      os.Getenv("DB_TLS_ENABLED") != "false",
 	}
 	st, err := store.New(storeCfg)
 	if err != nil {

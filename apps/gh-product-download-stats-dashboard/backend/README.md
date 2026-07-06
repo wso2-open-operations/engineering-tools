@@ -30,22 +30,23 @@ The server automatically loads `.env` from the working directory on startup
 
 ## Configuration
 
-| Variable                       | Description                                                 |
-| ------------------------------ | ----------------------------------------------------------- |
-| `DB_HOST`                      | MySQL host                                                  |
-| `DB_PORT`                      | MySQL port (default `3306`)                                 |
-| `DB_USER`                      | MySQL user                                                  |
-| `DB_PASSWORD`                  | MySQL password                                              |
-| `DB_NAME`                      | Database name (`github_statistics`)                         |
-| `DB_MAX_OPEN_CONNS`            | Max open pool connections (default `10`)                    |
-| `DB_MAX_IDLE_CONNS`            | Max idle pool connections (default `5`)                     |
-| `DB_CONN_MAX_LIFETIME_SECONDS` | Max connection lifetime (default `180`)                     |
-| `AUTH_JWKS_ENDPOINT`           | JWKS endpoint for JWT signature verification                |
-| `AUTH_ISSUER`                  | Expected JWT issuer                                         |
-| `AUTH_AUDIENCE`                | Expected JWT audience                                       |
-| `AUTH_TOKEN_VALIDATOR_ENABLED` | `false` to skip signature verification (local only)         |
-| `ADMIN_GROUPS`                 | Comma-separated group names allowed to call admin endpoints |
-| `PORT`                         | Server listen address (default `:8080`)                     |
+| Variable                       | Description                                                                                                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DB_HOST`                      | MySQL host                                                                                                                                                                    |
+| `DB_PORT`                      | MySQL port (default `3306`)                                                                                                                                                   |
+| `DB_USER`                      | MySQL user                                                                                                                                                                    |
+| `DB_PASSWORD`                  | MySQL password                                                                                                                                                                |
+| `DB_NAME`                      | Database name (`github_statistics`)                                                                                                                                           |
+| `DB_MAX_OPEN_CONNS`            | Max open pool connections (default `10`)                                                                                                                                      |
+| `DB_MAX_IDLE_CONNS`            | Max idle pool connections (default `5`)                                                                                                                                       |
+| `DB_CONN_MAX_LIFETIME_SECONDS` | Max connection lifetime (default `180`)                                                                                                                                       |
+| `DB_TLS_ENABLED`               | `false` to disable TLS to MySQL (default `true`). The stage/prod DB enforces `require_secure_transport=ON` and rejects plaintext connections, so this must stay `true` there. |
+| `AUTH_JWKS_ENDPOINT`           | JWKS endpoint for JWT signature verification                                                                                                                                  |
+| `AUTH_ISSUER`                  | Expected JWT issuer                                                                                                                                                           |
+| `AUTH_AUDIENCE`                | Expected JWT audience                                                                                                                                                         |
+| `AUTH_TOKEN_VALIDATOR_ENABLED` | `false` to skip signature verification (local only)                                                                                                                           |
+| `ADMIN_GROUPS`                 | Comma-separated group names allowed to call admin endpoints                                                                                                                   |
+| `PORT`                         | Server listen address (default `:8080`)                                                                                                                                       |
 
 ## Project Structure
 
@@ -94,18 +95,18 @@ backend/
 
 ### Public (JWT required)
 
-| Method | Endpoint                                           | Description                                |
-| ------ | -------------------------------------------------- | ------------------------------------------ |
-| `GET`  | `/api/v1/repositories`                             | List tracked repos with their latest stats |
-| `GET`  | `/api/v1/stats/summary`                            | Dashboard KPIs                             |
-| `GET`  | `/api/v1/stats/total?from=&to=&repos=`             | Cumulative downloads per repo              |
-| `GET`  | `/api/v1/stats/daily?from=&to=&repos=&interval=`   | Daily download deltas per repo             |
-| `GET`  | `/api/v1/stats/metric?metric=&from=&to=&repos=&interval=` | Time series for one GitHub stat (stars/forks/watchers/openIssues) |
-| `GET`  | `/api/v1/stats/clones?from=&to=&repos=`            | Clone traffic history per repo             |
-| `GET`  | `/api/v1/stats/versions/{repoId}?from=&to=`        | Download breakdown by version              |
-| `GET`  | `/api/v1/stats/versions/{repoId}/series?from=&to=&interval=` | Per-version download time series    |
-| `GET`  | `/api/v1/stats/assets/{repoId}?from=&to=&version=` | Download breakdown by asset                |
-| `GET`  | `/api/v1/stats/compare?repos=&from=&to=`           | Side-by-side comparison                    |
+| Method | Endpoint                                                     | Description                                                       |
+| ------ | ------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `GET`  | `/api/v1/repositories`                                       | List tracked repos with their latest stats                        |
+| `GET`  | `/api/v1/stats/summary`                                      | Dashboard KPIs                                                    |
+| `GET`  | `/api/v1/stats/total?from=&to=&repos=`                       | Cumulative downloads per repo                                     |
+| `GET`  | `/api/v1/stats/daily?from=&to=&repos=&interval=`             | Daily download deltas per repo                                    |
+| `GET`  | `/api/v1/stats/metric?metric=&from=&to=&repos=&interval=`    | Time series for one GitHub stat (stars/forks/watchers/openIssues) |
+| `GET`  | `/api/v1/stats/clones?from=&to=&repos=`                      | Clone traffic history per repo                                    |
+| `GET`  | `/api/v1/stats/versions/{repoId}?from=&to=`                  | Download breakdown by version                                     |
+| `GET`  | `/api/v1/stats/versions/{repoId}/series?from=&to=&interval=` | Per-version download time series                                  |
+| `GET`  | `/api/v1/stats/assets/{repoId}?from=&to=&version=`           | Download breakdown by asset                                       |
+| `GET`  | `/api/v1/stats/compare?repos=&from=&to=`                     | Side-by-side comparison                                           |
 
 `from`/`to` default to the last 30 days; `repos` is an optional comma-separated
 list of tracked-repository ids. `interval` on `total`, `daily`, and `metric` is
@@ -115,13 +116,13 @@ the running per-version total.
 
 ### Admin (JWT + admin group)
 
-| Method   | Endpoint                          | Description             |
-| -------- | --------------------------------- | ----------------------- |
+| Method   | Endpoint                          | Description                     |
+| -------- | --------------------------------- | ------------------------------- |
 | `GET`    | `/api/v1/admin/repositories`      | List all repos (incl. inactive) |
-| `POST`   | `/api/v1/admin/repositories`      | Add a new repo to track |
-| `PATCH`  | `/api/v1/admin/repositories/{id}` | Update repo config      |
-| `DELETE` | `/api/v1/admin/repositories/{id}` | Deactivate a repo       |
-| `GET`    | `/api/v1/admin/sync/logs`         | View sync job history   |
+| `POST`   | `/api/v1/admin/repositories`      | Add a new repo to track         |
+| `PATCH`  | `/api/v1/admin/repositories/{id}` | Update repo config              |
+| `DELETE` | `/api/v1/admin/repositories/{id}` | Deactivate a repo               |
+| `GET`    | `/api/v1/admin/sync/logs`         | View sync job history           |
 
 > Manual sync triggering is intentionally not exposed here — the cron runs as a
 > Choreo Scheduled Task and has no in-process trigger.
@@ -130,13 +131,13 @@ the running per-version total.
 
 **`POST /api/v1/admin/repositories`** — create a tracked repository.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `orgName` | string | **yes** | GitHub org (also used as the `owner` path segment) |
-| `repoName` | string | **yes** | Repository name |
-| `productName` | string \| null | no | Display/product name |
-| `assetPrefixes` | string[] | no | Release-asset name prefixes to track (empty/omitted ⇒ all assets) |
-| `isActive` | boolean | no | Whether the cron should sync it (default `true`) |
+| Field           | Type           | Required | Description                                                       |
+| --------------- | -------------- | -------- | ----------------------------------------------------------------- |
+| `orgName`       | string         | **yes**  | GitHub org (also used as the `owner` path segment)                |
+| `repoName`      | string         | **yes**  | Repository name                                                   |
+| `productName`   | string \| null | no       | Display/product name                                              |
+| `assetPrefixes` | string[]       | no       | Release-asset name prefixes to track (empty/omitted ⇒ all assets) |
+| `isActive`      | boolean        | no       | Whether the cron should sync it (default `true`)                  |
 
 ```json
 {
@@ -153,11 +154,11 @@ Response `201`: `{ "id": 42 }`
 **`PATCH /api/v1/admin/repositories/{id}`** — partial update; send only the fields
 you want to change (omitted fields are left unchanged).
 
-| Field | Type | Description |
-|---|---|---|
-| `productName` | string \| null | New product name |
-| `assetPrefixes` | string[] | Replace the tracked asset prefixes |
-| `isActive` | boolean | Activate / deactivate syncing |
+| Field           | Type           | Description                        |
+| --------------- | -------------- | ---------------------------------- |
+| `productName`   | string \| null | New product name                   |
+| `assetPrefixes` | string[]       | Replace the tracked asset prefixes |
+| `isActive`      | boolean        | Activate / deactivate syncing      |
 
 ```json
 {

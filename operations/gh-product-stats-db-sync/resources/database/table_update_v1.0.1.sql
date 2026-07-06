@@ -1,32 +1,3 @@
--- Reference schema for the GitHub statistics database. The source of truth is the
--- root-level database.sql; this copy is kept for convenience and is never applied as
--- DDL by the cron itself.
-
-CREATE DATABASE  IF NOT EXISTS `github_statistics`
-/*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */ /*!80016 DEFAULT ENCRYPTION='N' */;
-
-USE `github_statistics`;
-
--- KEEP AS-IS: Contains historical daily delta data from Oct 2024 onwards
--- Used for backward-compatible total download charts
-CREATE TABLE `repository_daily_increasing_counts` (
-  `id` int NOT NULL AUTO_INCREMENT,
-  `repository_id` int DEFAULT NULL,
-  `name` varchar(255) DEFAULT NULL,
-  `forks_count` int DEFAULT NULL,
-  `watchers_count` int DEFAULT NULL,
-  `stargazers_count` int DEFAULT NULL,
-  `open_issue_count` int DEFAULT NULL,
-  `clone_count` int DEFAULT NULL,
-  `release_assert_download_count` int DEFAULT NULL,
-  `org_id` int DEFAULT NULL,
-  `org_name` varchar(25) DEFAULT NULL,
-  `status` tinyint(1) DEFAULT '1',
-  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`)
-);
-
--- Replaces JSON file for repo configuration
 CREATE TABLE IF NOT EXISTS `tracked_repositories` (
     `id`              INT AUTO_INCREMENT PRIMARY KEY,
     `org_name`        VARCHAR(100) NOT NULL DEFAULT 'wso2',
@@ -39,7 +10,6 @@ CREATE TABLE IF NOT EXISTS `tracked_repositories` (
     UNIQUE KEY `uk_org_repo` (`org_name`, `repo_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Asset-level daily snapshots (enables version breakdown charts)
 CREATE TABLE IF NOT EXISTS `release_asset_daily_snapshots` (
     `id`                BIGINT AUTO_INCREMENT PRIMARY KEY,
     `tracked_repo_id`   INT NOT NULL,
@@ -60,7 +30,6 @@ CREATE TABLE IF NOT EXISTS `release_asset_daily_snapshots` (
     INDEX `idx_release_tag` (`release_tag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Repo-level daily snapshots (cumulative totals + clone traffic)
 CREATE TABLE IF NOT EXISTS `repository_daily_snapshots` (
     `id`                    BIGINT AUTO_INCREMENT PRIMARY KEY,
     `tracked_repo_id`       INT NOT NULL,
@@ -79,7 +48,6 @@ CREATE TABLE IF NOT EXISTS `repository_daily_snapshots` (
     INDEX `idx_snapshot_date` (`snapshot_date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Sync job execution log
 CREATE TABLE IF NOT EXISTS `sync_job_logs` (
     `id`              BIGINT AUTO_INCREMENT PRIMARY KEY,
     `status`          ENUM('STARTED', 'SUCCESS', 'PARTIAL_FAILURE', 'FAILED') NOT NULL,

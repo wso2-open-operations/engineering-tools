@@ -36,3 +36,6 @@ coverage
 
 # Lock files
 package-lock.json
+
+# Vite
+.vite
