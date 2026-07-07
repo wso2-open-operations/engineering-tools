@@ -31,6 +31,7 @@ import (
 	"github.com/MicahParks/jwkset"
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/time/rate"
 )
 
 // jwksSanitizer strips the optional "x5c" (and "x5t#S256") fields from JWKS
@@ -175,7 +176,21 @@ func Auth(shutdownCtx context.Context, cfg Config) func(http.Handler) http.Handl
 			// Misconfigured auth must not silently pass — fail at startup.
 			panic("auth: failed to initialise JWKS from " + cfg.JWKSEndpoint + ": " + err.Error())
 		}
-		jwks, err := keyfunc.New(keyfunc.Options{Ctx: shutdownCtx, Storage: jwksStorage})
+		// NewStorageFromHTTP alone only refreshes on RefreshInterval, with no
+		// on-demand fallback — an unrecognized kid (e.g. right after Asgardeo
+		// rotates in a new signing key) would fail every request until the next
+		// scheduled refresh. Wrapping it in NewHTTPClient with RefreshUnknownKID
+		// restores that on-demand, rate-limited re-fetch (same defaults
+		// jwkset's own NewDefaultCtx path uses) while keeping our sanitized client.
+		jwksClient, err := jwkset.NewHTTPClient(jwkset.HTTPClientOptions{
+			HTTPURLs:          map[string]jwkset.Storage{cfg.JWKSEndpoint: jwksStorage},
+			RateLimitWaitMax:  2 * time.Second,
+			RefreshUnknownKID: rate.NewLimiter(rate.Every(5*time.Minute), 1),
+		})
+		if err != nil {
+			panic("auth: failed to wrap JWKS storage from " + cfg.JWKSEndpoint + ": " + err.Error())
+		}
+		jwks, err := keyfunc.New(keyfunc.Options{Ctx: shutdownCtx, Storage: jwksClient})
 		if err != nil {
 			panic("auth: failed to initialise keyfunc from " + cfg.JWKSEndpoint + ": " + err.Error())
 		}

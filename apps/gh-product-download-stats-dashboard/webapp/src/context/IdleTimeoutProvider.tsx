@@ -15,21 +15,10 @@
 // under the License.
 
 import { useIdleTimer } from "react-idle-timer";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type JSX,
-  type ReactNode,
-} from "react";
+import { useCallback, useState, type JSX, type ReactNode } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import SessionWarningDialog from "@components/session-warning/SessionWarningDialog";
-import {
-  IDLE_TIMEOUT_MS,
-  IDLE_THROTTLE_MS,
-  IDLE_WARNING_GRACE_MS,
-} from "@constants/authConstants";
+import { IDLE_TIMEOUT_MS, IDLE_THROTTLE_MS } from "@constants/authConstants";
 import { useLogger } from "@hooks/useLogger";
 
 interface IdleTimeoutProviderProps {
@@ -37,9 +26,9 @@ interface IdleTimeoutProviderProps {
 }
 
 /**
- * Shows "Are you still there?" after 10 minutes of inactivity. If the user
- * doesn't click Continue within IDLE_WARNING_GRACE_MS, the session is
- * force-logged-out — an unattended authenticated session can't be resumed forever.
+ * Shows "Are you still there?" after 15 minutes of inactivity.
+ * Never auto-logs out — the session stays signed in indefinitely; it's purely
+ * informational and waits for the user to choose Continue or Logout.
  */
 export default function IdleTimeoutProvider({
   children,
@@ -47,17 +36,8 @@ export default function IdleTimeoutProvider({
   const [warningOpen, setWarningOpen] = useState(false);
   const { signOut, isSignedIn, isLoading } = useAsgardeo();
   const logger = useLogger();
-  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearGraceTimer = useCallback(() => {
-    if (graceTimerRef.current) {
-      clearTimeout(graceTimerRef.current);
-      graceTimerRef.current = null;
-    }
-  }, []);
 
   const handleLogout = useCallback(async () => {
-    clearGraceTimer();
     window.dispatchEvent(new CustomEvent("app:signing-out"));
     try {
       await signOut();
@@ -66,7 +46,7 @@ export default function IdleTimeoutProvider({
       logger.error("Error signing out after idle timeout");
       setWarningOpen(true);
     }
-  }, [signOut, logger, clearGraceTimer]);
+  }, [signOut, logger]);
 
   const { activate } = useIdleTimer({
     timeout: IDLE_TIMEOUT_MS,
@@ -74,22 +54,14 @@ export default function IdleTimeoutProvider({
     onIdle: () => {
       if (isSignedIn && !isLoading) {
         setWarningOpen(true);
-        clearGraceTimer();
-        graceTimerRef.current = setTimeout(() => {
-          void handleLogout();
-        }, IDLE_WARNING_GRACE_MS);
       }
     },
   });
 
   const handleContinue = () => {
-    clearGraceTimer();
     setWarningOpen(false);
     activate();
   };
-
-  // Belt-and-braces: cancel a pending forced logout if the provider unmounts.
-  useEffect(() => clearGraceTimer, [clearGraceTimer]);
 
   return (
     <>
