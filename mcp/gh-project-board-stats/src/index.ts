@@ -8,7 +8,11 @@ import { runTool } from "./tools/runTool";
 
 async function main() {
     const anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY!
+    if (!process.env.ANTHROPIC_API_KEY) {
+        throw new Error("Missing ANTHROPIC_API_KEY environment variable");
+    }
+    const anthropic = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY
     });
 
     const client = await connectMCP();
