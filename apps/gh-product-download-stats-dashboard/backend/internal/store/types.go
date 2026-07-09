@@ -50,18 +50,29 @@ type RepositoryWithStats struct {
 
 // Summary holds the dashboard KPI figures.
 type Summary struct {
-	TrackedRepositories int          `json:"trackedRepositories"`
-	TotalDownloads      int64        `json:"totalDownloads"`
-	TotalStars          int          `json:"totalStars"`
-	TotalForks          int          `json:"totalForks"`
-	TotalClonesLast30d  int          `json:"totalClonesLast30d"`
-	TotalClonesLast14d  int          `json:"totalClonesLast14d"`
-	TodayDownloads      int64        `json:"todayDownloads"`
-	TodayDeltaPct       *float64     `json:"todayDeltaPct"`
-	MonthDownloads      int64        `json:"monthDownloads"`
-	LastSyncDate        *string      `json:"lastSyncDate"`
-	LastSyncStatus      *string      `json:"lastSyncStatus"`
-	TopProducts         []TopProduct `json:"topProducts"`
+	TrackedRepositories int   `json:"trackedRepositories"`
+	TotalDownloads      int64 `json:"totalDownloads"`
+	TotalStars          int   `json:"totalStars"`
+	TotalForks          int   `json:"totalForks"`
+	TotalClonesLast30d  int   `json:"totalClonesLast30d"`
+	TotalClonesLast14d  int   `json:"totalClonesLast14d"`
+	// TodayDownloads is actually the most recently *completed* day's download
+	// delta, not the current day's — GitHub's API only reports a cumulative
+	// total, never a per-day delta, so a same-day figure can never exist; see
+	// AsOfDate for the day it actually represents.
+	TodayDownloads int64    `json:"todayDownloads"`
+	TodayDeltaPct  *float64 `json:"todayDeltaPct"`
+	// AsOfDate is the calendar day TodayDownloads (and each TopProduct's
+	// TodayDownloads) actually represents — computed as the latest snapshot's
+	// date minus one day, since the snapshot itself (stamped with the sync's run
+	// date) only captures the state as of the end of the PREVIOUS day. One day
+	// behind the current date is therefore the expected, healthy value; more than
+	// one day behind means the sync cron hasn't run/succeeded recently.
+	AsOfDate       *string      `json:"asOfDate"`
+	MonthDownloads int64        `json:"monthDownloads"`
+	LastSyncDate   *string      `json:"lastSyncDate"`
+	LastSyncStatus *string      `json:"lastSyncStatus"`
+	TopProducts    []TopProduct `json:"topProducts"`
 }
 
 // TopProduct is a ranked repository row for the Overview "top products" table.

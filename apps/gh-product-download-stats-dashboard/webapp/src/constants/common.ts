@@ -25,7 +25,6 @@ export const ROUTES = {
   DOWNLOADS: "/downloads",
   VERSIONS: "/versions",
   GITHUB_STATS: "/repository-stats",
-  COMPARE: "/compare",
   ADMIN: "/admin",
   ERROR_400: "/400",
   ERROR_401: "/401",

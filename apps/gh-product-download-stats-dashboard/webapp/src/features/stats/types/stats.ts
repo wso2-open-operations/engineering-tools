@@ -65,6 +65,10 @@ export interface Summary {
   totalClonesLast14d: number;
   todayDownloads: number;
   todayDeltaPct: number | null;
+  // The actual snapshot date todayDownloads/topProducts[].todayDownloads are
+  // computed from — may be older than today if the sync cron hasn't run/
+  // succeeded recently.
+  asOfDate: string | null;
   monthDownloads: number;
   lastSyncDate: string | null;
   lastSyncStatus: string | null;
@@ -151,20 +155,4 @@ export interface AssetBreakdown {
   snapshotDate: string;
   version: string | null;
   assets: AssetBreakdownItem[];
-}
-
-export interface CompareItem {
-  repoId: number;
-  repoName: string;
-  totalDownloads: number;
-  downloadsInRange: number;
-  stars: number;
-  forks: number;
-  clonesInRange: number;
-}
-
-export interface CompareResponse {
-  from: string;
-  to: string;
-  items: CompareItem[];
 }

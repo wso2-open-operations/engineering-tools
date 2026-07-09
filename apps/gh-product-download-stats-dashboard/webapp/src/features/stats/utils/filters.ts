@@ -38,6 +38,7 @@ function isoDate(d: Date): string {
 }
 
 // Default inclusive range: last DEFAULT_RANGE_DAYS days ending today (UTC).
+// Used only by OverviewPage's "last 30 days" hero chart.
 export function defaultRange(): { from: string; to: string } {
   const to = new Date();
   const from = new Date();
@@ -45,9 +46,15 @@ export function defaultRange(): { from: string; to: string } {
   return { from: isoDate(from), to: isoDate(to) };
 }
 
+// Default inclusive range for the analytics pages (Downloads, Versions,
+// Repository Stats): from the start of tracked history through today (UTC).
+export function defaultAnalyticsRange(): { from: string; to: string } {
+  return { from: "2024-10-01", to: isoDate(new Date()) };
+}
+
 // Parses dashboard filters from URL search params, applying defaults.
 export function parseFilters(params: URLSearchParams): StatsFilters {
-  const def = defaultRange();
+  const def = defaultAnalyticsRange();
   const reposRaw = params.get("repos") ?? "";
   const repos = reposRaw
     .split(",")

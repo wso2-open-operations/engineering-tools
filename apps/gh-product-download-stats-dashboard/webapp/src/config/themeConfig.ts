@@ -17,19 +17,21 @@
 import {
   AcrylicOrangeTheme,
   AcrylicPurpleTheme,
-  ChoreoTheme,
+  WSO2Theme,
   ClassicTheme,
   HighContrastTheme,
 } from "@wso2/oxygen-ui";
-import type { OxygenTheme } from "@wso2/oxygen-ui/styles/Themes/OxygenThemeBase";
+import type { OxygenThemeType as OxygenTheme } from "@wso2/oxygen-ui";
 
 // Every Oxygen UI theme the dashboard exposes, keyed by the value used in
 // window.config.GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_THEME and persisted as the runtime choice.
 // Single source of truth for both the build-time default and the theme picker.
+// "choreo" maps to WSO2Theme — oxygen-ui@0.12.0 renamed its export from
+// ChoreoTheme to WSO2Theme; the app's own "choreo" key/label is unchanged.
 export const THEMES = {
   acrylicOrange: AcrylicOrangeTheme,
   acrylicPurple: AcrylicPurpleTheme,
-  choreo: ChoreoTheme,
+  choreo: WSO2Theme,
   classic: ClassicTheme,
   highContrast: HighContrastTheme,
 } satisfies Record<string, OxygenTheme>;

@@ -55,7 +55,6 @@ backend independently enforces admin access (see the repo-root `auth.md`).
 | `/downloads`    | Downloads — cumulative + per-period (day/month), version & asset drill-down | `/stats/total`, `/stats/daily`, `/stats/versions/{id}`, `/stats/assets/{id}` |
 | `/clones`       | Clone Traffic — total vs unique                                             | `/stats/clones`                                                              |
 | `/github-stats` | GitHub Stats — stars/forks/watchers/issues over time                        | `/stats/metric`                                                              |
-| `/compare`      | Compare — overlaid downloads + comparison table                             | `/stats/total`, `/stats/compare`                                             |
 | `/admin`        | Admin (gated) — manage tracked repos + sync history                         | `/admin/repositories`, CRUD, `/admin/sync/logs`                              |
 
 All analytics filters (repos, date range, interval, metric) live in the **URL query
@@ -73,7 +72,7 @@ src/
 ├── layouts/     AppLayout · AuthGuard · RequireAdmin · ErrorLayout
 ├── components/   side-nav-bar · header · error · empty-state · error-state · stat-card · charts
 └── features/
-    ├── stats/        api · components · pages (Overview/Downloads/Clones/GitHubStats/Compare) · types · utils · constants
+    ├── stats/        api · components · pages (Overview/Downloads/Clones/GitHubStats) · types · utils · constants
     └── repositories/ api · components · pages (Admin) · types
 ```
 

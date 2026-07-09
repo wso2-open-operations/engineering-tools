@@ -19,7 +19,6 @@ import {
   Download,
   Package,
   Star,
-  GitCompare,
   Settings,
 } from "@wso2/oxygen-ui-icons-react";
 import { type ComponentType } from "react";
@@ -38,6 +37,5 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "downloads", label: "Downloads", path: ROUTES.DOWNLOADS, icon: Download },
   { id: "versions", label: "Versions", path: ROUTES.VERSIONS, icon: Package },
   { id: "github-stats", label: "Repository Stats", path: ROUTES.GITHUB_STATS, icon: Star },
-  { id: "compare", label: "Comparison", path: ROUTES.COMPARE, icon: GitCompare },
   { id: "admin", label: "Admin", path: ROUTES.ADMIN, icon: Settings, adminOnly: true },
 ];

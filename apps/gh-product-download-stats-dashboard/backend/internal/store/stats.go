@@ -63,9 +63,19 @@ func (s *Store) Summary(ctx context.Context) (*Summary, error) {
 
 	// Today's / previous-day / this-month download counts, derived from per-repo
 	// daily deltas (first snapshot per repo is NULL → omitted, per the first-day rule).
+	// snapshot_date is stamped with the sync's run date, not the date the delta's
+	// activity happened — GitHub only reports a cumulative total, so the delta at
+	// the latest snapshot_date reflects the PREVIOUS day's completed activity.
+	// asOfDate is therefore MAX(snapshot_date) - 1 day, so it names the day
+	// TodayDownloads actually represents, not the day the sync happened to run.
+	// MonthDownloads is likewise attributed by activity_date (snapshot_date - 1),
+	// so a delta whose snapshot_date falls on the 1st (but whose activity
+	// actually happened on the last day of the PREVIOUS month) isn't miscounted
+	// into the wrong month.
 	const downloadsQuery = `
 		WITH deltas AS (
 			SELECT s.snapshot_date,
+			       DATE_SUB(s.snapshot_date, INTERVAL 1 DAY) AS activity_date,
 			       s.total_download_count - LAG(s.total_download_count)
 			           OVER (PARTITION BY s.tracked_repo_id ORDER BY s.snapshot_date) AS d
 			FROM repository_daily_snapshots s
@@ -74,15 +84,21 @@ func (s *Store) Summary(ctx context.Context) (*Summary, error) {
 		SELECT
 		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM deltas)), 0),
 		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM deltas WHERE snapshot_date < (SELECT MAX(snapshot_date) FROM deltas))), 0),
-		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE DATE_FORMAT(snapshot_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')), 0)`
+		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE DATE_FORMAT(activity_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')), 0),
+		  DATE_SUB((SELECT MAX(snapshot_date) FROM deltas), INTERVAL 1 DAY)`
 	var prevDownloads int64
+	var asOfDate sql.NullTime
 	if err := s.db.QueryRowContext(ctx, downloadsQuery).
-		Scan(&sum.TodayDownloads, &prevDownloads, &sum.MonthDownloads); err != nil {
+		Scan(&sum.TodayDownloads, &prevDownloads, &sum.MonthDownloads, &asOfDate); err != nil {
 		return nil, fmt.Errorf("store: summary downloads: %w", err)
 	}
 	if prevDownloads > 0 {
 		pct := (float64(sum.TodayDownloads) - float64(prevDownloads)) / float64(prevDownloads) * 100
 		sum.TodayDeltaPct = &pct
+	}
+	if asOfDate.Valid {
+		d := formatDate(asOfDate.Time)
+		sum.AsOfDate = &d
 	}
 
 	topProducts, err := s.topProducts(ctx, 8)
@@ -229,25 +245,36 @@ func (s *Store) topProducts(ctx context.Context, limit int) ([]TopProduct, error
 }
 
 // TotalSeries returns the cumulative download series per repository over the date
-// range, at daily or monthly (end-of-month value) granularity.
+// range, at daily or monthly (end-of-month value) granularity. Dates are labeled
+// by activity_date (snapshot_date - 1 day): the sync cron stamps snapshot_date
+// with its own run date, but the cumulative total it captures only reflects state
+// as of the end of the PREVIOUS day, so activity_date is the day the value was
+// actually true as of.
 func (s *Store) TotalSeries(ctx context.Context, from, to string, repoIDs []int, interval Interval) ([]RepoSeries, error) {
+	activity := `
+		SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name,
+		       DATE_SUB(s.snapshot_date, INTERVAL 1 DAY) AS activity_date,
+		       s.total_download_count AS value
+		FROM repository_daily_snapshots s
+		JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1`
+	var args []any
+	if in, inArgs := repoIDPlaceholders(repoIDs); in != "" {
+		activity += " WHERE s.tracked_repo_id IN (" + in + ")"
+		args = append(args, inArgs...)
+	}
+
 	if interval == IntervalMonth {
 		query := `
 			SELECT x.tracked_repo_id, x.repo_name, x.month_key, x.value FROM (
-				SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name,
-				       DATE_FORMAT(s.snapshot_date, '%Y-%m') AS month_key,
-				       s.total_download_count AS value,
-				       ROW_NUMBER() OVER (PARTITION BY s.tracked_repo_id, DATE_FORMAT(s.snapshot_date, '%Y-%m')
-				                          ORDER BY s.snapshot_date DESC, s.id DESC) AS rn
-				FROM repository_daily_snapshots s
-				JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1
-				WHERE s.snapshot_date BETWEEN ? AND ?`
-		args := []any{from, to}
-		if in, inArgs := repoIDPlaceholders(repoIDs); in != "" {
-			query += " AND s.tracked_repo_id IN (" + in + ")"
-			args = append(args, inArgs...)
-		}
-		query += `) x WHERE x.rn = 1 ORDER BY x.tracked_repo_id, x.month_key`
+				SELECT tracked_repo_id, repo_name,
+				       DATE_FORMAT(activity_date, '%Y-%m') AS month_key,
+				       value,
+				       ROW_NUMBER() OVER (PARTITION BY tracked_repo_id, DATE_FORMAT(activity_date, '%Y-%m')
+				                          ORDER BY activity_date DESC) AS rn
+				FROM (` + activity + `) a
+				WHERE activity_date BETWEEN ? AND ?
+			) x WHERE x.rn = 1 ORDER BY x.tracked_repo_id, x.month_key`
+		args := append(append([]any{}, args...), from, to)
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("store: total series (monthly): %w", err)
@@ -257,16 +284,11 @@ func (s *Store) TotalSeries(ctx context.Context, from, to string, repoIDs []int,
 	}
 
 	query := `
-		SELECT s.tracked_repo_id, t.repo_name, DATE_FORMAT(s.snapshot_date, '%Y-%m-%d'), s.total_download_count
-		FROM repository_daily_snapshots s
-		JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1
-		WHERE s.snapshot_date BETWEEN ? AND ?`
-	args := []any{from, to}
-	if in, inArgs := repoIDPlaceholders(repoIDs); in != "" {
-		query += " AND s.tracked_repo_id IN (" + in + ")"
-		args = append(args, inArgs...)
-	}
-	query += " ORDER BY s.tracked_repo_id, s.snapshot_date"
+		SELECT tracked_repo_id, repo_name, DATE_FORMAT(activity_date, '%Y-%m-%d'), value
+		FROM (` + activity + `) a
+		WHERE activity_date BETWEEN ? AND ?
+		ORDER BY tracked_repo_id, activity_date`
+	args = append(args, from, to)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: total series: %w", err)
@@ -281,11 +303,16 @@ func (s *Store) TotalSeries(ctx context.Context, from, to string, repoIDs []int,
 // correct delta; the repository's very first snapshot has a NULL delta and is
 // omitted — this is what prevents a newly-added repo's day-1 total (which carries
 // all historical downloads) from skewing the graph. Negative deltas (e.g. an asset
-// removed upstream) are clamped to zero.
+// removed upstream) are clamped to zero. Dates are labeled by activity_date
+// (snapshot_date - 1 day): the delta stored at a row stamped with the sync's run
+// date is really the PREVIOUS day's completed activity (GitHub only reports a
+// cumulative total, never a per-day delta), so activity_date is the day the
+// delta actually represents.
 func (s *Store) DailySeries(ctx context.Context, from, to string, repoIDs []int, interval Interval) ([]RepoSeries, error) {
 	inner := `
-		SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name, s.snapshot_date AS snapshot_date,
-		       DATE_FORMAT(s.snapshot_date, '%Y-%m') AS month_key,
+		SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name,
+		       DATE_SUB(s.snapshot_date, INTERVAL 1 DAY) AS activity_date,
+		       DATE_FORMAT(DATE_SUB(s.snapshot_date, INTERVAL 1 DAY), '%Y-%m') AS month_key,
 		       s.total_download_count - LAG(s.total_download_count)
 		           OVER (PARTITION BY s.tracked_repo_id ORDER BY s.snapshot_date) AS delta
 		FROM repository_daily_snapshots s
@@ -299,13 +326,13 @@ func (s *Store) DailySeries(ctx context.Context, from, to string, repoIDs []int,
 	var query string
 	if interval == IntervalMonth {
 		query = `SELECT d.tracked_repo_id, d.repo_name, d.month_key, CAST(SUM(GREATEST(d.delta, 0)) AS SIGNED) FROM (` + inner + `) d
-			WHERE d.snapshot_date BETWEEN ? AND ? AND d.delta IS NOT NULL
+			WHERE d.activity_date BETWEEN ? AND ? AND d.delta IS NOT NULL
 			GROUP BY d.tracked_repo_id, d.repo_name, d.month_key
 			ORDER BY d.tracked_repo_id, d.month_key`
 	} else {
-		query = `SELECT d.tracked_repo_id, d.repo_name, DATE_FORMAT(d.snapshot_date, '%Y-%m-%d'), GREATEST(d.delta, 0) FROM (` + inner + `) d
-			WHERE d.snapshot_date BETWEEN ? AND ? AND d.delta IS NOT NULL
-			ORDER BY d.tracked_repo_id, d.snapshot_date`
+		query = `SELECT d.tracked_repo_id, d.repo_name, DATE_FORMAT(d.activity_date, '%Y-%m-%d'), GREATEST(d.delta, 0) FROM (` + inner + `) d
+			WHERE d.activity_date BETWEEN ? AND ? AND d.delta IS NOT NULL
+			ORDER BY d.tracked_repo_id, d.activity_date`
 	}
 	args = append(args, from, to)
 
@@ -317,51 +344,78 @@ func (s *Store) DailySeries(ctx context.Context, from, to string, repoIDs []int,
 	return collectSeries(rows)
 }
 
-// MetricSeries returns a per-repository time series for a point-in-time GitHub stat
-// (stars/forks/watchers/open issues) over the date range. At monthly granularity it
-// returns each month's last recorded value.
+// MetricSeries returns a per-repository time series for a GitHub stat
+// (stars/forks/watchers/open issues) over the date range. Dates are labeled by
+// activity_date (snapshot_date - 1 day), consistent with TotalSeries.
+//
+// "cumulative" returns the raw point-in-time value per day (e.g. "1,234 stars
+// as of this day"). "day"/"month" return the actual CHANGE in the metric
+// (stars/forks/watchers/issues gained or lost that day, or summed over the
+// month) via the same LAG() delta pattern as DailySeries — unlike downloads,
+// this delta is deliberately NOT clamped to zero: losing stars, forks, or
+// watchers, or issues being closed, are real, meaningful negative deltas.
 func (s *Store) MetricSeries(ctx context.Context, metric Metric, from, to string, repoIDs []int, interval Interval) ([]RepoSeries, error) {
 	col, ok := metricColumns[metric]
 	if !ok {
 		return nil, fmt.Errorf("store: unknown metric %q", metric)
 	}
 
-	if interval == IntervalMonth {
-		query := `
-			SELECT x.tracked_repo_id, x.repo_name, x.month_key, x.value FROM (
-				SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name,
-				       DATE_FORMAT(s.snapshot_date, '%Y-%m') AS month_key,
-				       s.` + col + ` AS value,
-				       ROW_NUMBER() OVER (PARTITION BY s.tracked_repo_id, DATE_FORMAT(s.snapshot_date, '%Y-%m')
-				                          ORDER BY s.snapshot_date DESC, s.id DESC) AS rn
-				FROM repository_daily_snapshots s
-				JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1
-				WHERE s.snapshot_date BETWEEN ? AND ?`
-		args := []any{from, to}
+	if interval == IntervalCumulative {
+		activity := `
+			SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name,
+			       DATE_SUB(s.snapshot_date, INTERVAL 1 DAY) AS activity_date,
+			       s.` + col + ` AS value
+			FROM repository_daily_snapshots s
+			JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1`
+		var args []any
 		if in, inArgs := repoIDPlaceholders(repoIDs); in != "" {
-			query += " AND s.tracked_repo_id IN (" + in + ")"
+			activity += " WHERE s.tracked_repo_id IN (" + in + ")"
 			args = append(args, inArgs...)
 		}
-		query += `) x WHERE x.rn = 1 ORDER BY x.tracked_repo_id, x.month_key`
+		query := `
+			SELECT tracked_repo_id, repo_name, DATE_FORMAT(activity_date, '%Y-%m-%d'), value
+			FROM (` + activity + `) a
+			WHERE activity_date BETWEEN ? AND ?
+			ORDER BY tracked_repo_id, activity_date`
+		args = append(args, from, to)
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
-			return nil, fmt.Errorf("store: metric series (monthly): %w", err)
+			return nil, fmt.Errorf("store: metric series (cumulative): %w", err)
 		}
 		defer rows.Close()
 		return collectSeries(rows)
 	}
 
-	query := `
-		SELECT s.tracked_repo_id, t.repo_name, DATE_FORMAT(s.snapshot_date, '%Y-%m-%d'), s.` + col + `
+	// First snapshot per repo has a NULL delta (nothing to diff against) and is
+	// omitted, same as DailySeries — prevents a newly-tracked repo's day-1
+	// cumulative value from being misread as a huge single-day delta.
+	deltas := `
+		SELECT s.tracked_repo_id AS tracked_repo_id, t.repo_name AS repo_name,
+		       DATE_SUB(s.snapshot_date, INTERVAL 1 DAY) AS activity_date,
+		       DATE_FORMAT(DATE_SUB(s.snapshot_date, INTERVAL 1 DAY), '%Y-%m') AS month_key,
+		       s.` + col + ` - LAG(s.` + col + `)
+		           OVER (PARTITION BY s.tracked_repo_id ORDER BY s.snapshot_date) AS delta
 		FROM repository_daily_snapshots s
-		JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1
-		WHERE s.snapshot_date BETWEEN ? AND ?`
-	args := []any{from, to}
+		JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1`
+	var args []any
 	if in, inArgs := repoIDPlaceholders(repoIDs); in != "" {
-		query += " AND s.tracked_repo_id IN (" + in + ")"
+		deltas += " WHERE s.tracked_repo_id IN (" + in + ")"
 		args = append(args, inArgs...)
 	}
-	query += " ORDER BY s.tracked_repo_id, s.snapshot_date"
+
+	var query string
+	if interval == IntervalMonth {
+		query = `SELECT d.tracked_repo_id, d.repo_name, d.month_key, CAST(SUM(d.delta) AS SIGNED) FROM (` + deltas + `) d
+			WHERE d.activity_date BETWEEN ? AND ? AND d.delta IS NOT NULL
+			GROUP BY d.tracked_repo_id, d.repo_name, d.month_key
+			ORDER BY d.tracked_repo_id, d.month_key`
+	} else {
+		query = `SELECT d.tracked_repo_id, d.repo_name, DATE_FORMAT(d.activity_date, '%Y-%m-%d'), d.delta FROM (` + deltas + `) d
+			WHERE d.activity_date BETWEEN ? AND ? AND d.delta IS NOT NULL
+			ORDER BY d.tracked_repo_id, d.activity_date`
+	}
+	args = append(args, from, to)
+
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: metric series: %w", err)
@@ -432,7 +486,7 @@ func (s *Store) VersionBreakdown(ctx context.Context, repoID int, from, to strin
 	if snapDate == "" {
 		return out, nil
 	}
-	out.SnapshotDate = snapDate
+	out.SnapshotDate = activityDateOf(snapDate)
 
 	const query = `
 		SELECT release_tag, MAX(release_name), SUM(download_count)
@@ -466,7 +520,10 @@ func (s *Store) VersionBreakdown(ctx context.Context, repoID int, from, to strin
 
 // VersionSeries returns a per-release-tag download time series for a repository.
 // interval "day" = daily delta, "month" = monthly sum of deltas, "cumulative" =
-// running total. Asset rows are summed per (release_tag, date) first.
+// running total. Asset rows are summed per (release_tag, date) first. Dates are
+// labeled by activity_date (snapshot_date - 1 day) — see DailySeries/TotalSeries
+// comments for why: the sync cron stamps snapshot_date with its own run date, but
+// the value it captures only reflects state as of the end of the PREVIOUS day.
 func (s *Store) VersionSeries(ctx context.Context, repoID int, from, to string, interval Interval) ([]VersionSeries, error) {
 	const base = `
 		WITH per_day AS (
@@ -477,7 +534,8 @@ func (s *Store) VersionSeries(ctx context.Context, repoID int, from, to string, 
 			GROUP BY release_tag, snapshot_date
 		),
 		deltas AS (
-			SELECT release_tag, release_name, snapshot_date, total,
+			SELECT release_tag, release_name, snapshot_date,
+			       DATE_SUB(snapshot_date, INTERVAL 1 DAY) AS activity_date, total,
 			       total - LAG(total) OVER (PARTITION BY release_tag ORDER BY snapshot_date) AS d
 			FROM per_day
 		)`
@@ -486,24 +544,24 @@ func (s *Store) VersionSeries(ctx context.Context, repoID int, from, to string, 
 	switch interval {
 	case IntervalCumulative:
 		query = base + `
-			SELECT release_tag, release_name, DATE_FORMAT(snapshot_date, '%Y-%m-%d'), total
+			SELECT release_tag, release_name, DATE_FORMAT(activity_date, '%Y-%m-%d'), total
 			FROM deltas
-			WHERE snapshot_date BETWEEN ? AND ?
-			ORDER BY release_tag, snapshot_date`
+			WHERE activity_date BETWEEN ? AND ?
+			ORDER BY release_tag, activity_date`
 	case IntervalMonth:
 		query = base + `
-			SELECT release_tag, MAX(release_name), DATE_FORMAT(snapshot_date, '%Y-%m'),
+			SELECT release_tag, MAX(release_name), DATE_FORMAT(activity_date, '%Y-%m'),
 			       CAST(SUM(GREATEST(d, 0)) AS SIGNED)
 			FROM deltas
-			WHERE snapshot_date BETWEEN ? AND ? AND d IS NOT NULL
-			GROUP BY release_tag, DATE_FORMAT(snapshot_date, '%Y-%m')
-			ORDER BY release_tag, DATE_FORMAT(snapshot_date, '%Y-%m')`
+			WHERE activity_date BETWEEN ? AND ? AND d IS NOT NULL
+			GROUP BY release_tag, DATE_FORMAT(activity_date, '%Y-%m')
+			ORDER BY release_tag, DATE_FORMAT(activity_date, '%Y-%m')`
 	default: // day
 		query = base + `
-			SELECT release_tag, release_name, DATE_FORMAT(snapshot_date, '%Y-%m-%d'), GREATEST(d, 0)
+			SELECT release_tag, release_name, DATE_FORMAT(activity_date, '%Y-%m-%d'), GREATEST(d, 0)
 			FROM deltas
-			WHERE snapshot_date BETWEEN ? AND ? AND d IS NOT NULL
-			ORDER BY release_tag, snapshot_date`
+			WHERE activity_date BETWEEN ? AND ? AND d IS NOT NULL
+			ORDER BY release_tag, activity_date`
 	}
 
 	rows, err := s.db.QueryContext(ctx, query, repoID, from, to)
@@ -545,32 +603,52 @@ func (s *Store) VersionSeries(ctx context.Context, repoID int, from, to string, 
 	return out, nil
 }
 
-// AssetBreakdown returns per-asset download counts for a repository at the latest
-// snapshot date within the range, optionally filtered to a single release version.
+// AssetBreakdown returns per-asset download deltas summed over the date range
+// — matching VersionSeries's day-delta pattern, so the Assets table relies on
+// the same date range as the Versions table, instead of a single point-in-time
+// snapshot. Optionally filtered to a single release version. Negative deltas
+// are clamped to zero, consistent with every other download-delta query (a
+// real per-asset count can only grow). asset_github_id is the LAG() partition
+// key — it's the schema's actual per-asset identity (see uk_asset_date).
+// SnapshotDate is kept as metadata (the latest activity date the totals cover,
+// for staleness awareness), not as the date the totals are "as of" a single day.
 func (s *Store) AssetBreakdown(ctx context.Context, repoID int, from, to string, version string) (*AssetBreakdown, error) {
-	snapDate, err := s.maxAssetSnapshotDate(ctx, repoID, from, to)
-	if err != nil {
-		return nil, err
-	}
 	out := &AssetBreakdown{RepoID: repoID, Assets: []AssetBreakdownItem{}}
 	if version != "" {
 		out.Version = &version
 	}
+
+	snapDate, err := s.maxAssetSnapshotDate(ctx, repoID, from, to)
+	if err != nil {
+		return nil, err
+	}
 	if snapDate == "" {
 		return out, nil
 	}
-	out.SnapshotDate = snapDate
+	out.SnapshotDate = activityDateOf(snapDate)
 
 	query := `
-		SELECT release_tag, asset_name, asset_github_id, content_type, asset_size, download_count
-		FROM release_asset_daily_snapshots
-		WHERE tracked_repo_id = ? AND snapshot_date = ?`
-	args := []any{repoID, snapDate}
+		WITH deltas AS (
+			SELECT release_tag, asset_name, asset_github_id, content_type, asset_size,
+			       DATE_SUB(snapshot_date, INTERVAL 1 DAY) AS activity_date,
+			       download_count - LAG(download_count)
+			           OVER (PARTITION BY asset_github_id ORDER BY snapshot_date) AS d
+			FROM release_asset_daily_snapshots
+			WHERE tracked_repo_id = ?`
+	args := []any{repoID}
 	if version != "" {
 		query += " AND release_tag = ?"
 		args = append(args, version)
 	}
-	query += " ORDER BY download_count DESC, asset_name"
+	query += `
+		)
+		SELECT release_tag, asset_name, asset_github_id, MAX(content_type), MAX(asset_size),
+		       CAST(SUM(GREATEST(d, 0)) AS SIGNED) AS total
+		FROM deltas
+		WHERE activity_date BETWEEN ? AND ? AND d IS NOT NULL
+		GROUP BY release_tag, asset_name, asset_github_id
+		ORDER BY total DESC, asset_name`
+	args = append(args, from, to)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -662,7 +740,7 @@ func (s *Store) maxAssetSnapshotDate(ctx context.Context, repoID int, from, to s
 	var d sql.NullTime
 	err := s.db.QueryRowContext(ctx,
 		`SELECT MAX(snapshot_date) FROM release_asset_daily_snapshots
-		 WHERE tracked_repo_id = ? AND snapshot_date BETWEEN ? AND ?`,
+		 WHERE tracked_repo_id = ? AND DATE_SUB(snapshot_date, INTERVAL 1 DAY) BETWEEN ? AND ?`,
 		repoID, from, to,
 	).Scan(&d)
 	if err != nil {
@@ -672,6 +750,19 @@ func (s *Store) maxAssetSnapshotDate(ctx context.Context, repoID int, from, to s
 		return "", nil
 	}
 	return formatDate(d.Time), nil
+}
+
+// activityDateOf shifts a "YYYY-MM-DD" snapshot_date back one day to the
+// activity_date it actually represents — the sync cron stamps snapshot_date with
+// its own run date, but the value it captures only reflects state as of the end
+// of the PREVIOUS day (see DailySeries/TotalSeries comments). Returns the input
+// unchanged if it isn't a valid date.
+func activityDateOf(snapshotDate string) string {
+	t, err := time.Parse("2006-01-02", snapshotDate)
+	if err != nil {
+		return snapshotDate
+	}
+	return formatDate(t.AddDate(0, 0, -1))
 }
 
 // seriesCollector accumulates time-series points grouped by repository while

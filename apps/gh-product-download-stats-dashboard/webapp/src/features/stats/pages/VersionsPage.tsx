@@ -23,6 +23,8 @@ import {
   Divider,
   FormControl,
   Grid,
+  IconButton,
+  InputBase,
   InputLabel,
   ListItemText,
   MenuItem,
@@ -37,14 +39,17 @@ import {
   TextField,
   Tooltip,
   Typography,
+  Skeleton,
 } from "@wso2/oxygen-ui";
 import {
   ChevronDown,
   ChevronUp,
   Info,
   ListFilter,
+  Search,
+  X,
 } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useEffect, useRef, useState } from "react";
+import { type JSX, useEffect, useMemo, useState } from "react";
 import PageHeader from "@components/page-header/PageHeader";
 import { usePagination } from "@hooks/usePagination";
 import { ROWS_PER_PAGE_OPTIONS } from "@constants/tableConstants";
@@ -59,6 +64,13 @@ import { useGetAssetBreakdown } from "@features/stats/api/useGetAssetBreakdown";
 import { type Interval, type VersionSeries } from "@features/stats/types/stats";
 import { parseFilters, mergeParams } from "@features/stats/utils/filters";
 import { formatCompact, formatBytes } from "@utils/format";
+
+// How many of the most recent versions to show in the chart by default, so a
+// product with many releases doesn't dump every version onto it at once.
+// Unchecking all versions in the filter shows every version in the chart too.
+// The Versions table below is unaffected — it always lists every version, since
+// its purpose is a complete, comparable view rather than a focused chart read.
+const DEFAULT_VISIBLE_VERSIONS = 5;
 
 const MODE_OPTIONS: Array<{ value: Interval; label: string }> = [
   { value: "day", label: "Daily" },
@@ -85,11 +97,19 @@ export default function VersionsPage(): JSX.Element {
 
   // Single-version selection for the Assets panel (row click).
   const [version, setVersion] = useState<string | null>(null);
-  const defaultVersionRepoId = useRef<number | null>(null);
+  // repoId for which the auto-selected version/selectedVersions defaults below
+  // have actually been computed. State (not a ref) because it's read during
+  // render to gate the Assets query — see repoSettled below.
+  const [defaultVersionRepoId, setDefaultVersionRepoId] = useState<
+    number | null
+  >(null);
 
   // Multi-select filter for which versions appear in the chart + by-version table.
   const [selectedVersions, setSelectedVersions] = useState<string[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(true);
+  const [versionSearch, setVersionSearch] = useState("");
+  const [showVersionSearch, setShowVersionSearch] = useState(false);
+  const [searchResetRepoId, setSearchResetRepoId] = useState(repoId);
 
   const seriesQuery = useGetVersionSeries(
     repoId,
@@ -97,32 +117,90 @@ export default function VersionsPage(): JSX.Element {
     filters.to,
     filters.interval,
   );
+
+  // Memoized (not a bare `?? []`) so this stays referentially stable across
+  // renders whenever seriesQuery.data itself hasn't changed — otherwise `?? []`
+  // creates a brand-new empty array every render while loading, which the
+  // React Compiler can't safely treat as a dependency for memoized values
+  // derived from it (see chartSeries below).
+  const series = useMemo(
+    () => seriesQuery.data?.series ?? [],
+    [seriesQuery.data],
+  );
+
+  // True once the effect below has computed the auto-selected version for the
+  // CURRENT repoId. Gates the Assets query so it never fires for a repo whose
+  // default version hasn't been resolved yet — without this, switching repos
+  // fired the Assets query once immediately with the stale/null version left
+  // over from the previous repo, showing unfiltered (wrong-looking) data, and
+  // then fired it again moments later once the real default version landed,
+  // producing a second avoidable loading flicker right after the chart and
+  // Versions table had already finished loading.
+  const repoSettled = defaultVersionRepoId === repoId;
+
   const assetsQuery = useGetAssetBreakdown(
-    repoId,
+    repoSettled ? repoId : null,
     filters.from,
     filters.to,
     version,
   );
 
-  const series = seriesQuery.data?.series ?? [];
-
-  // Auto-select the latest version (tag desc) for the Assets panel when data first loads.
+  // Auto-select the Assets panel's default version to match the Versions
+  // table's own first row (highest total downloads) — not the latest release
+  // tag, which is a different sort and could easily point at a different,
+  // mismatched version. Also defaults the chart to just the most recent
+  // DEFAULT_VISIBLE_VERSIONS releases (tag desc — a chart of recent trends,
+  // not tied to the Assets panel's selection), when data first loads for a
+  // newly selected product. This was previously two
+  // separate effects (one resetting on repoId change, one auto-selecting once
+  // series arrived) — when a repo's series was already cached by TanStack Query,
+  // the data arrived on the SAME render as the repoId change, so the auto-select
+  // effect ran first and picked 5, then the reset effect (declared after it)
+  // immediately overwrote that back to empty/"all versions". Merging into one
+  // effect makes that ordering race impossible.
+  //
+  // Deliberately depends on seriesQuery.data, NOT the derived `series` variable
+  // above — `series` falls back to a brand-new `[]` literal on every render
+  // while the query is loading (unlike seriesQuery.data, which TanStack Query
+  // keeps referentially stable until the fetch actually resolves), so using it
+  // as a dependency reran this effect every render, and setSelectedVersions([])
+  // in the loading branch below never bails out (a new [] is never Object.is
+  // the previous one), forcing another render — an infinite update loop.
   useEffect(() => {
-    if (series.length > 0 && defaultVersionRepoId.current !== repoId) {
-      const latestTag =
-        [...series].sort((a, b) => b.releaseTag.localeCompare(a.releaseTag))[0]
-          ?.releaseTag ?? null;
-      setVersion(latestTag);
-      defaultVersionRepoId.current = repoId;
+    if (defaultVersionRepoId === repoId) return;
+    if (!seriesQuery.data) {
+      // New repo's data hasn't arrived yet — clear the previous repo's stale
+      // selections. Leaves defaultVersionRepoId unset so this effect re-runs
+      // and picks real defaults once data lands.
+      setSelectedVersions([]);
+      setVersion(null);
+      return;
     }
-  }, [series, repoId]);
+    const byDownloads = seriesQuery.data.series
+      .map((v) => ({
+        tag: v.releaseTag,
+        total: v.points.reduce((a, p) => a + p.value, 0),
+      }))
+      .sort((a, b) => b.total - a.total);
+    const sortedByTag = [...seriesQuery.data.series].sort((a, b) =>
+      b.releaseTag.localeCompare(a.releaseTag),
+    );
+    setVersion(byDownloads[0]?.tag ?? null);
+    setSelectedVersions(
+      sortedByTag.slice(0, DEFAULT_VISIBLE_VERSIONS).map((v) => v.releaseTag),
+    );
+    setDefaultVersionRepoId(repoId);
+  }, [repoId, seriesQuery.data, defaultVersionRepoId]);
 
-  // Reset multi-select and version default tracking when the product changes.
-  useEffect(() => {
-    setSelectedVersions([]);
-    setVersion(null);
-    defaultVersionRepoId.current = null;
-  }, [repoId]);
+  // Reset the version search when the product changes, so a search from one
+  // product doesn't silently carry over and hide rows on another. Adjusted
+  // during render (React's documented pattern for this) rather than via an
+  // effect, since it's a plain "prop changed" reset with no async work.
+  if (repoId !== searchResetRepoId) {
+    setSearchResetRepoId(repoId);
+    setVersionSearch("");
+    setShowVersionSearch(false);
+  }
 
   const onChange = (updates: Record<string, string | number[] | null>) =>
     setParams(mergeParams(params, updates), { replace: true });
@@ -140,25 +218,48 @@ export default function VersionsPage(): JSX.Element {
     })
     .sort((a, b) => b.total - a.total);
 
-  // Apply version multi-select filter for chart and by-version table.
-  const filteredSeries =
-    selectedVersions.length > 0
-      ? series.filter((v) => selectedVersions.includes(v.releaseTag))
-      : series;
+  // The version multi-select filter narrows the chart only, so a product with
+  // many releases doesn't dump every line onto it at once. The table's job is
+  // the opposite — a complete, comparable view of every version — so it always
+  // shows allRows regardless of the chart's selection.
+  //
+  // Memoized on its true dependencies only (series, selectedVersions) — not
+  // computed inline — so it keeps the same array reference across renders
+  // triggered by unrelated table-only state (the version search text, the
+  // single-row version click for the Assets panel, etc). SeriesChart itself
+  // memoizes its chart data off the `series` prop's reference, so an inline
+  // computation here (a new array every render regardless of cause) defeated
+  // that memoization and made the chart visibly re-render on every table
+  // interaction, even though chart data and table data are meant to be
+  // isolated from each other.
+  const chartSeries = useMemo(
+    () =>
+      toChart(
+        selectedVersions.length > 0
+          ? series.filter((v) => selectedVersions.includes(v.releaseTag))
+          : series,
+      ),
+    [series, selectedVersions],
+  );
 
-  const displayRows =
-    selectedVersions.length > 0
-      ? allRows.filter((r) => selectedVersions.includes(r.tag))
-      : allRows;
-
-  const grandTotal = displayRows.reduce((acc, r) => acc + r.total, 0);
-  const rowsWithShare = displayRows.map((r) => ({
+  const grandTotal = allRows.reduce((acc, r) => acc + r.total, 0);
+  const rowsWithShare = allRows.map((r) => ({
     ...r,
     share: grandTotal > 0 ? (r.total / grandTotal) * 100 : 0,
   }));
 
+  // Search narrows which rows are shown/paginated, but share % stays relative
+  // to the true total across all versions (not just the search results).
+  const displayedRows = versionSearch
+    ? rowsWithShare.filter(
+        (r) =>
+          r.name.toLowerCase().includes(versionSearch.toLowerCase()) ||
+          r.tag.toLowerCase().includes(versionSearch.toLowerCase()),
+      )
+    : rowsWithShare;
+
   const assets = assetsQuery.data?.assets ?? [];
-  const versionPagination = usePagination(rowsWithShare);
+  const versionPagination = usePagination(displayedRows);
   const assetPagination = usePagination(assets);
 
   const variant = filters.interval === "month" ? "bar" : "line";
@@ -199,9 +300,11 @@ export default function VersionsPage(): JSX.Element {
           </FormControl>
 
           <FormControl size="small" sx={{ minWidth: 200 }}>
-            <InputLabel>Version</InputLabel>
+            <InputLabel shrink>Version</InputLabel>
             <Select
               multiple
+              displayEmpty
+              notched
               value={selectedVersions}
               label="Version"
               onChange={(e) => {
@@ -290,14 +393,13 @@ export default function VersionsPage(): JSX.Element {
 
       <ChartCard
         title="Downloads by version"
-        subtitle="One series per release tag"
         showTypeToggle={filters.interval !== "month"}
         defaultVariant={variant}
       >
         {(v) => (
           <SeriesChart
             variant={filters.interval === "month" ? "bar" : v}
-            series={toChart(filteredSeries)}
+            series={chartSeries}
             isLoading={seriesQuery.isLoading}
             isError={seriesQuery.isError}
             onRetry={() => void seriesQuery.refetch()}
@@ -318,7 +420,13 @@ export default function VersionsPage(): JSX.Element {
           <Typography variant="h6" component="h3" sx={{ mb: 2 }}>
             Versions
           </Typography>
-          {seriesQuery.isError ? (
+          {seriesQuery.isLoading ? (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} variant="rounded" height={36} />
+              ))}
+            </Box>
+          ) : seriesQuery.isError ? (
             <ErrorState minHeight={160} />
           ) : rowsWithShare.length === 0 ? (
             <EmptyState title="No versions found" minHeight={160} />
@@ -327,7 +435,56 @@ export default function VersionsPage(): JSX.Element {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Version</TableCell>
+                    <TableCell>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                        Version
+                        {!showVersionSearch ? (
+                          <Tooltip title="Filter by version">
+                            <IconButton
+                              size="small"
+                              aria-label="Filter by version"
+                              onClick={() => setShowVersionSearch(true)}
+                            >
+                              <Search size={14} />
+                            </IconButton>
+                          </Tooltip>
+                        ) : (
+                          <>
+                            <InputBase
+                              autoFocus
+                              placeholder="Filter…"
+                              aria-label="Filter versions"
+                              value={versionSearch}
+                              onChange={(e) => setVersionSearch(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Escape") {
+                                  setVersionSearch("");
+                                  setShowVersionSearch(false);
+                                }
+                              }}
+                              sx={{
+                                fontSize: "0.8rem",
+                                width: 110,
+                                borderBottom: "1px solid",
+                                borderColor: "divider",
+                              }}
+                            />
+                            <Tooltip title="Clear filter">
+                              <IconButton
+                                size="small"
+                                aria-label="Clear version filter"
+                                onClick={() => {
+                                  setVersionSearch("");
+                                  setShowVersionSearch(false);
+                                }}
+                              >
+                                <X size={14} />
+                              </IconButton>
+                            </Tooltip>
+                          </>
+                        )}
+                      </Box>
+                    </TableCell>
                     <TableCell>Tag</TableCell>
                     <TableCell align="right">Downloads</TableCell>
                     <TableCell align="right">
@@ -352,42 +509,55 @@ export default function VersionsPage(): JSX.Element {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {versionPagination.paged.map((r) => (
-                    <TableRow
-                      key={r.tag}
-                      hover
-                      selected={version === r.tag}
-                      role="button"
-                      tabIndex={0}
-                      sx={{ cursor: "pointer" }}
-                      onClick={() =>
-                        setVersion(version === r.tag ? null : r.tag)
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setVersion(version === r.tag ? null : r.tag);
-                        }
-                      }}
-                    >
-                      <TableCell>{r.name}</TableCell>
-                      <TableCell>
-                        <Box
-                          component="span"
-                          sx={{
-                            fontFamily: "monospace",
-                            fontSize: "0.75rem",
-                          }}
-                        >
-                          {r.tag}
-                        </Box>
+                  {displayedRows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} sx={{ border: 0 }}>
+                        <EmptyState
+                          title="No versions match your search"
+                          minHeight={120}
+                        />
                       </TableCell>
-                      <TableCell align="right">
-                        {formatCompact(r.total)}
-                      </TableCell>
-                      <TableCell align="right">{r.share.toFixed(1)}%</TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    versionPagination.paged.map((r) => (
+                      <TableRow
+                        key={r.tag}
+                        hover
+                        selected={version === r.tag}
+                        role="button"
+                        tabIndex={0}
+                        sx={{ cursor: "pointer" }}
+                        onClick={() =>
+                          setVersion(version === r.tag ? null : r.tag)
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setVersion(version === r.tag ? null : r.tag);
+                          }
+                        }}
+                      >
+                        <TableCell>{r.name}</TableCell>
+                        <TableCell>
+                          <Box
+                            component="span"
+                            sx={{
+                              fontFamily: "monospace",
+                              fontSize: "0.75rem",
+                            }}
+                          >
+                            {r.tag}
+                          </Box>
+                        </TableCell>
+                        <TableCell align="right">
+                          {formatCompact(r.total)}
+                        </TableCell>
+                        <TableCell align="right">
+                          {r.share.toFixed(1)}%
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
               <TablePagination
@@ -426,7 +596,13 @@ export default function VersionsPage(): JSX.Element {
               </Tooltip>
             )}
           </Box>
-          {assetsQuery.isError ? (
+          {!repoSettled || assetsQuery.isLoading ? (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} variant="rounded" height={36} />
+              ))}
+            </Box>
+          ) : assetsQuery.isError ? (
             <ErrorState minHeight={160} />
           ) : assets.length === 0 ? (
             <EmptyState title="No asset data" minHeight={160} />

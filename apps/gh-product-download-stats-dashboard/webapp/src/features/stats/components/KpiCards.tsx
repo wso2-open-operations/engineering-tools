@@ -55,7 +55,7 @@ export default function KpiCards({
       }}
     >
       <StatCard
-        label="Today's Downloads"
+        label="Yesterday's Downloads"
         value={formatCompact(summary?.todayDownloads ?? 0)}
         icon={<Download size={20} />}
         iconColor="success"

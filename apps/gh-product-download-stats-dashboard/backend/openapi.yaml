@@ -63,6 +63,7 @@ components:
         totalClonesLast14d: { type: integer }
         todayDownloads: { type: integer, format: int64 }
         todayDeltaPct: { type: number, nullable: true }
+        asOfDate: { type: string, format: date, nullable: true }
         monthDownloads: { type: integer, format: int64 }
         lastSyncDate: { type: string, format: date-time, nullable: true }
         lastSyncStatus: { type: string, nullable: true }
@@ -95,7 +96,7 @@ components:
       properties:
         from: { type: string, format: date }
         to: { type: string, format: date }
-        interval: { type: string, enum: [day, month] }
+        interval: { type: string, enum: [day, month, cumulative] }
         series:
           type: array
           items: { $ref: '#/components/schemas/RepoSeries' }
@@ -105,7 +106,7 @@ components:
         metric: { type: string, enum: [stars, forks, watchers, openIssues] }
         from: { type: string, format: date }
         to: { type: string, format: date }
-        interval: { type: string, enum: [day, month] }
+        interval: { type: string, enum: [day, month, cumulative] }
         series:
           type: array
           items: { $ref: '#/components/schemas/RepoSeries' }
@@ -349,12 +350,17 @@ paths:
   /api/v1/stats/metric:
     get:
       summary: Time series for a single GitHub stat (stars/forks/watchers/openIssues)
+      description: >-
+        interval=day/month return the actual change in the metric (gained or
+        lost that day, or summed over the month) — not clamped to zero, since
+        losing stars/forks/watchers or issues closing are real negative
+        deltas. interval=cumulative returns the raw point-in-time value.
       parameters:
         - name: metric
           in: query
           required: true
           schema: { type: string, enum: [stars, forks, watchers, openIssues] }
-          description: Which point-in-time stat to return as a series.
+          description: Which GitHub stat to return as a series.
         - $ref: '#/components/parameters/From'
         - $ref: '#/components/parameters/To'
         - $ref: '#/components/parameters/Repos'
@@ -446,6 +452,11 @@ paths:
   /api/v1/stats/assets/{repoId}:
     get:
       summary: Download breakdown by release asset
+      description: >-
+        downloadCount per asset is summed as daily deltas over from-to (same
+        pattern as /stats/versions), not a single point-in-time cumulative
+        snapshot — it relies on the date range the same way the Versions
+        table/series does.
       parameters:
         - name: repoId
           in: path

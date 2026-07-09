@@ -31,7 +31,6 @@ const OverviewPage = lazy(() => import("@features/stats/pages/OverviewPage"));
 const DownloadsPage = lazy(() => import("@features/stats/pages/DownloadsPage"));
 const VersionsPage = lazy(() => import("@features/stats/pages/VersionsPage"));
 const RepositoryStatsPage = lazy(() => import("@features/stats/pages/RepositoryStatsPage"));
-const ComparePage = lazy(() => import("@features/stats/pages/ComparePage"));
 const AdminPage = lazy(() => import("@features/repositories/pages/AdminPage"));
 
 export default function App(): JSX.Element {
@@ -47,7 +46,6 @@ export default function App(): JSX.Element {
         <Route path={ROUTES.DOWNLOADS} element={<DownloadsPage />} />
         <Route path={ROUTES.VERSIONS} element={<VersionsPage />} />
         <Route path={ROUTES.GITHUB_STATS} element={<RepositoryStatsPage />} />
-        <Route path={ROUTES.COMPARE} element={<ComparePage />} />
         <Route
           path={ROUTES.ADMIN}
           element={

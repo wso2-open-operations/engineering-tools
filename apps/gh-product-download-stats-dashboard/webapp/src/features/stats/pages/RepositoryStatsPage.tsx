@@ -44,6 +44,7 @@ import { useSearchParams } from "react-router";
 import FilterBar from "@features/stats/components/FilterBar";
 import ChartCard from "@features/stats/components/ChartCard";
 import SeriesChart, { type ChartSeries } from "@components/charts/SeriesChart";
+import EmptyState from "@components/empty-state/EmptyState";
 import { useGetRepositories } from "@features/stats/api/useGetRepositories";
 import { useGetMetricSeries } from "@features/stats/api/useGetMetricSeries";
 import { useGetCloneSeries } from "@features/stats/api/useGetCloneSeries";
@@ -108,7 +109,8 @@ function transformClones(
 
 type TableMode = "total" | "month" | "day";
 
-// Returns the metric value for a repo from a daily series for the given mode/date.
+// Returns the metric value for a repo from a daily DELTA series (tableBase
+// always requests interval: "day" — see below) for the given mode/date.
 // Returns null in "total" mode so callers can fall back to latestSnapshot.
 function getSeriesValue(
   series: RepoSeries[] | undefined,
@@ -122,9 +124,12 @@ function getSeriesValue(
   if (mode === "day") {
     return s.points.find((p) => p.date === date)?.value ?? 0;
   }
-  // Monthly: last recorded point in the month (end-of-month snapshot for cumulative metrics).
+  // Monthly: sum of that month's daily deltas (net change over the month),
+  // not the last day's value — the series is daily deltas, not cumulative
+  // snapshots, so picking the last point would only show that single day's
+  // change rather than the whole month's.
   const pts = s.points.filter((p) => p.date.startsWith(date));
-  return pts.length > 0 ? (pts[pts.length - 1]?.value ?? 0) : 0;
+  return pts.reduce((sum, p) => sum + p.value, 0);
 }
 
 // Anchors the mode-based table date to the selected range's end (filters.to)
@@ -420,59 +425,72 @@ export default function RepositoryStatsPage(): JSX.Element {
             </TableRow>
           </TableHead>
           <TableBody>
-            {repoPagination.paged.map((r) => {
-              const stars =
-                getSeriesValue(
-                  starsTableQuery.data?.series,
-                  r.id,
-                  tableMode,
-                  tableDate,
-                ) ??
-                r.latestSnapshot?.stargazersCount ??
-                0;
-              const forks =
-                getSeriesValue(
-                  forksTableQuery.data?.series,
-                  r.id,
-                  tableMode,
-                  tableDate,
-                ) ??
-                r.latestSnapshot?.forksCount ??
-                0;
-              const watchers =
-                getSeriesValue(
-                  watchersTableQuery.data?.series,
-                  r.id,
-                  tableMode,
-                  tableDate,
-                ) ??
-                r.latestSnapshot?.watchersCount ??
-                0;
-              const issues =
-                getSeriesValue(
-                  issuesTableQuery.data?.series,
-                  r.id,
-                  tableMode,
-                  tableDate,
-                ) ??
-                r.latestSnapshot?.openIssuesCount ??
-                0;
-              return (
-                <TableRow key={r.id}>
-                  <TableCell>{r.productName || r.repoName}</TableCell>
-                  <TableCell align="right">{formatCompact(stars)}</TableCell>
-                  <TableCell align="right">{formatCompact(forks)}</TableCell>
-                  <TableCell align="right">{formatCompact(watchers)}</TableCell>
-                  <TableCell align="right">{formatCompact(issues)}</TableCell>
-                  <TableCell align="right">
-                    {formatCompact(cloneTotals.get(r.id)?.count ?? 0)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {formatCompact(cloneTotals.get(r.id)?.uniques ?? 0)}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {repoPagination.paged.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7} sx={{ border: 0 }}>
+                  <EmptyState
+                    title="No products match your search"
+                    minHeight={120}
+                  />
+                </TableCell>
+              </TableRow>
+            ) : (
+              repoPagination.paged.map((r) => {
+                const stars =
+                  getSeriesValue(
+                    starsTableQuery.data?.series,
+                    r.id,
+                    tableMode,
+                    tableDate,
+                  ) ??
+                  r.latestSnapshot?.stargazersCount ??
+                  0;
+                const forks =
+                  getSeriesValue(
+                    forksTableQuery.data?.series,
+                    r.id,
+                    tableMode,
+                    tableDate,
+                  ) ??
+                  r.latestSnapshot?.forksCount ??
+                  0;
+                const watchers =
+                  getSeriesValue(
+                    watchersTableQuery.data?.series,
+                    r.id,
+                    tableMode,
+                    tableDate,
+                  ) ??
+                  r.latestSnapshot?.watchersCount ??
+                  0;
+                const issues =
+                  getSeriesValue(
+                    issuesTableQuery.data?.series,
+                    r.id,
+                    tableMode,
+                    tableDate,
+                  ) ??
+                  r.latestSnapshot?.openIssuesCount ??
+                  0;
+                return (
+                  <TableRow key={r.id}>
+                    <TableCell>{r.productName || r.repoName}</TableCell>
+                    <TableCell align="right">{formatCompact(stars)}</TableCell>
+                    <TableCell align="right">{formatCompact(forks)}</TableCell>
+                    <TableCell align="right">
+                      {formatCompact(watchers)}
+                    </TableCell>
+                    <TableCell align="right">{formatCompact(issues)}</TableCell>
+                    <TableCell align="right">
+                      {formatCompact(cloneTotals.get(r.id)?.count ?? 0)}
+                    </TableCell>
+                    <TableCell align="right">
+                      {formatCompact(cloneTotals.get(r.id)?.uniques ?? 0)}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
           </TableBody>
         </Table>
         <TablePagination
