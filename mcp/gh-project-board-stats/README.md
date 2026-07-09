@@ -59,15 +59,6 @@ Start the assistant:
 
 Build Docker Image
 
-```bash
-docker build -t gh-project-board-stats .
-```
-
-Run Container 
-
-```bash
-docker run --env-file .env gh-project-board-stats
-```
 
 Example:
 
