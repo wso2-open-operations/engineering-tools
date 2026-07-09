@@ -156,6 +156,14 @@ All `GET /api/v1/stats/*` endpoints require the User role.
 
 Dashboard KPI figures. Totals are summed over each active repository's most recent
 snapshot; `totalClonesLast30d` sums `cloneCount` across the last 30 days.
+`todayDownloads` (despite the name) is the download delta for the most recently
+*completed* day, not the current one — the sync cron takes one snapshot per day
+and stamps it with its own run date, but GitHub only ever reports a cumulative
+total, never a per-day delta, so the delta between the two most recent snapshots
+reflects the previous day's real activity. `asOfDate` names that day (one day
+behind the latest snapshot's own date) — one day behind the current date is the
+healthy case; more than that means the sync cron hasn't run/succeeded recently —
+see the `asOfDate` field below.
 
 - **Query params:** none
 
@@ -171,6 +179,7 @@ snapshot; `totalClonesLast30d` sums `cloneCount` across the last 30 days.
   "totalClonesLast14d": 4310,
   "todayDownloads": 1305,
   "todayDeltaPct": 5.2,
+  "asOfDate": "2026-06-24",
   "monthDownloads": 40218,
   "lastSyncDate": "2026-06-25T03:14:00Z",
   "lastSyncStatus": "SUCCESS",
@@ -262,9 +271,13 @@ day-1 total from skewing the graph. Negative deltas are clamped to `0`.
 
 ### `GET /api/v1/stats/metric`
 
-Per-repository time series for a single **point-in-time GitHub stat** — used to chart
-e.g. star counts over time. At `interval=month` each point is that month's last
-recorded value.
+Per-repository time series for a single GitHub stat (stars/forks/watchers/open
+issues). `interval=day`/`month` return the actual **change** in the metric —
+how many stars/forks/watchers were gained or lost that day, or summed over the
+month — computed the same way as download deltas. Unlike downloads, this delta
+is **not** clamped to zero: losing stars, forks, or watchers, or issues being
+closed, are real, meaningful negative values. `interval=cumulative` returns the
+raw point-in-time value instead (e.g. "2,451 stars as of this day").
 
 - **Query params:**
 
@@ -274,7 +287,7 @@ recorded value.
 | `from` | date | no | Inclusive start (default: 30 days ago) |
 | `to` | date | no | Inclusive end (default: today UTC) |
 | `repos` | string | no | Comma-separated repo ids; omitted ⇒ all active repos |
-| `interval` | string | no | `day` (default) or `month` (month's last value) |
+| `interval` | string | no | `day` (default, daily delta), `month` (monthly summed delta), or `cumulative` (raw point-in-time value) |
 
 **Response `200`:**
 
@@ -402,8 +415,12 @@ Per-version download time series for one repository — one point series per
 
 ### `GET /api/v1/stats/assets/{repoId}`
 
-Download counts grouped by individual release asset for one repository, taken at the
-latest asset snapshot date within the range. Optionally filtered to a single version.
+Download counts grouped by individual release asset for one repository, **summed as
+daily deltas over `from`–`to`** (the same read-time delta pattern as `/stats/versions`,
+so it relies on the date range exactly like the Versions table/series does) rather than
+a single point-in-time cumulative snapshot. Optionally filtered to a single version.
+`snapshotDate` is metadata only — the latest activity date the totals cover, for
+staleness awareness — not "the day these totals are as of."
 
 - **Path params:** `repoId` (positive integer)
 - **Query params:**
@@ -647,10 +664,22 @@ View the cron's sync job history, most recent first.
 | `totalClonesLast14d` | integer | no |
 | `todayDownloads` | integer (int64) | no |
 | `todayDeltaPct` | number | yes |
+| `asOfDate` | string (date) | yes |
 | `monthDownloads` | integer (int64) | no |
 | `lastSyncDate` | string (RFC3339) | yes |
 | `lastSyncStatus` | string | yes |
 | `topProducts` | array of TopProduct | no |
+
+`asOfDate` is the calendar day that `todayDownloads` (and each
+`topProducts[].todayDownloads`) actually represents — the latest snapshot's own
+`snapshot_date` minus one day, since the sync cron stamps `snapshot_date` with
+its own run date (matching the convention used by the migrated historical data),
+but the snapshot itself only captures state as of the end of the *previous* day —
+GitHub reports a cumulative total, never a per-day delta, so a same-day figure
+can never exist. **One day behind the current date is therefore the expected,
+healthy value for `asOfDate`.** Clients should treat `todayDownloads` as
+"yesterday's complete daily delta," and treat `asOfDate` as a staleness signal
+only when it falls *more than* one day behind the current date.
 
 `TopProduct`: `repoId` (integer), `repoName` (string), `productName` (string, nullable), `todayDownloads` (integer int64), `totalDownloads` (integer int64), `stars` (integer).
 
