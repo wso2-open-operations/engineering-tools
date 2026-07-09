@@ -48,7 +48,7 @@ export default function TopProductsTable({
   const navigate = useNavigate();
 
   const top = [...(products ?? [])]
-    .sort((a, b) => b.todayDownloads - a.todayDownloads)
+    .sort((a, b) => b.totalDownloads - a.totalDownloads)
     .slice(0, TOP_N);
 
   return (
@@ -72,7 +72,6 @@ export default function TopProductsTable({
           <TableHead>
             <TableRow>
               <TableCell>Product</TableCell>
-              <TableCell align="right">Today</TableCell>
               <TableCell align="right">Total</TableCell>
             </TableRow>
           </TableHead>
@@ -93,9 +92,6 @@ export default function TopProductsTable({
                 }}
               >
                 <TableCell>{p.productName || p.repoName}</TableCell>
-                <TableCell align="right">
-                  {formatCompact(p.todayDownloads)}
-                </TableCell>
                 <TableCell align="right">
                   {formatCompact(p.totalDownloads)}
                 </TableCell>
