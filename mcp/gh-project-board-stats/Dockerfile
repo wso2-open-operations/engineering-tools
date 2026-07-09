@@ -41,5 +41,6 @@ RUN groupadd -r app && \
 USER app
 
 ENV MCP_SERVER_PATH=/usr/local/bin/github-mcp-server
+EXPOSE 8080
 
 CMD ["node", "dist/index.js"]

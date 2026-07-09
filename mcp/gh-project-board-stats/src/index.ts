@@ -15,7 +15,7 @@
 // under the License.
 
 import "dotenv/config";
-import readline from "node:readline";
+import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
 
 import { connectMCP } from "./tools/mcpClient";
@@ -32,49 +32,67 @@ async function main() {
 
     const client = await connectMCP();
 
-    console.log("GitHub Assistant is ready!");
+    const app = express();
 
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
+    app.use(express.json());
+
+    app.get("/health", (_req, res) => {
+        res.json({
+            status: "UP"
+        });
     });
 
-    rl.setPrompt("ASK > ");
-    rl.prompt();
-
-    rl.on("line", async (input) => {
-        const question = input.trim();
-        if (!question) return rl.prompt();
+    app.post("/query", async (req, res) => {
 
         try {
-            console.log("Understanding request...");
 
-            const intent = await routeIntent(anthropic, question);
-            console.log("Intent resolved:", intent);
-            const result = await runTool(client, intent);
+            const question = req.body?.question;
 
-            if (!Array.isArray(result) || result.length === 0) {
-                console.log("\nNo releases found for this week's iteration.\n");
-            } else {
-                console.log(`\nFound ${result.length} release(s):\n`);
-
-                result.forEach((release: any, index: number) => {
-
-                    console.log(
-                        `${index + 1}. ${release.content.title}`
-                    );
-
-                    console.log(
-                        `URL: ${release.content.html_url}`
-                    );
-
+            if (!question) {
+                return res.status(400).json({
+                    error: "Missing question"
                 });
             }
-        } catch (err) {
-            console.error(err);
+
+            console.log("Question:", question);
+
+            const intent =
+                await routeIntent(
+                    anthropic,
+                    question
+                );
+
+            console.log("Intent:", intent);
+
+            const releases =
+                await runTool(
+                    client,
+                    intent
+                );
+
+            return res.json({
+                count: releases.length,
+                releases
+            });
+
+        } catch (error: any) {
+
+            console.error(error);
+
+            return res.status(500).json({
+                error: error.message
+            });
         }
 
-        rl.prompt();
+    });
+
+    const port =
+        Number(process.env.PORT) || 8080;
+
+    app.listen(port, () => {
+        console.log(
+            `GitHub Project Board Stats Service listening on port ${port}`
+        );
     });
 }
 
