@@ -7,7 +7,6 @@ import { routeIntent } from "./agent/routeIntent";
 import { runTool } from "./tools/runTool";
 
 async function main() {
-    const anthropic = new Anthropic({
     if (!process.env.ANTHROPIC_API_KEY) {
         throw new Error("Missing ANTHROPIC_API_KEY environment variable");
     }
