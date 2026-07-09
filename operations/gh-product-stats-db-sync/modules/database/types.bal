@@ -65,8 +65,8 @@ public type TrackedRepository record {|
 # + stargazersCount - Number of stargazers
 # + watchersCount - Number of watchers
 # + openIssuesCount - Number of open issues
-# + cloneCount - Today's clone count (0 if unavailable)
-# + cloneUniques - Today's unique cloners (0 if unavailable)
+# + cloneCount - Yesterday's (most recently complete day's) clone count (0 if unavailable)
+# + cloneUniques - Yesterday's (most recently complete day's) unique cloners (0 if unavailable)
 public type RepoSnapshotData record {|
     int totalDownloadCount;
     int forksCount;

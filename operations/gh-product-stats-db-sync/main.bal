@@ -89,17 +89,28 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
     entity:Repository repository = check entity:getRepository(org, name);
     entity:Release[] releases = check entity:getAllReleases(org, name);
 
-    // Single source of truth for "today" — used both to pick today's clone-traffic
-    // record and as the snapshot_date written below, so the two never drift apart.
-    string today = currentUtcDate();
+    // snapshot_date is stamped with the cron's run date (today), matching the
+    // convention already baked into the migrated historical data (see
+    // resources/migrations — legacy rows use DATE(created_at), i.e. the sync date,
+    // not the date the data represents). NOTE: the cumulative totals fetched below
+    // (downloads/stars/forks/watchers/issues) are still, in truth, the state as of
+    // the END of the PREVIOUS day — GitHub's API only reports a running cumulative
+    // count, so a same-day delta can never exist. Downstream consumers must treat
+    // "this row's delta" as "yesterday's real activity, labeled with today's date."
+    string snapshotDate = currentUtcDate();
 
     // Soft dependency: clone traffic needs Administration:read; store 0 if unavailable.
+    // GitHub's clone count/uniques for the current UTC day are cumulative-and-partial
+    // until the day closes, so match yesterday's — the most recent *complete* — day
+    // instead, even though it's stored under today's snapshotDate above (same
+    // one-day-behind reality as the download/star/fork figures).
     int cloneCount = 0;
     int cloneUniques = 0;
     entity:ClonesTraffic|error clones = entity:getClonesTraffic(org, name);
     if clones is entity:ClonesTraffic {
+        string yesterday = yesterdayUtcDate();
         foreach entity:CloneRecord cloneRecord in clones.clones {
-            if cloneRecord.timestamp.startsWith(today) {
+            if cloneRecord.timestamp.startsWith(yesterday) {
                 cloneCount = cloneRecord.count;
                 cloneUniques = cloneRecord.uniques;
                 break;
@@ -138,7 +149,7 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
         cloneCount,
         cloneUniques
     };
-    check database:writeRepoSnapshot(repo.id, today, repoData, assetSnapshots);
+    check database:writeRepoSnapshot(repo.id, snapshotDate, repoData, assetSnapshots);
 }
 
 # True if the asset name matches the prefix filter. An empty prefix list means "include all".
@@ -181,11 +192,29 @@ isolated function toPrefixes(json prefixes) returns string[] {
     return result;
 }
 
-# Today's date in UTC as "YYYY-MM-DD", to match GitHub clone-traffic timestamps.
+# Today's date in UTC as "YYYY-MM-DD", used as the snapshot_date for each sync run
+# — matching the historical/migrated data convention (sync date, not data date).
 #
 # + return - The current UTC date string
 isolated function currentUtcDate() returns string {
-    time:Civil civil = time:utcToCivil(time:utcNow());
+    return formatUtcDate(time:utcNow());
+}
+
+# Yesterday's date in UTC as "YYYY-MM-DD" — the most recent fully-complete day, used
+# to match GitHub's clone-traffic record so the count/uniques stored aren't a
+# still-accumulating partial-day value.
+#
+# + return - Yesterday's UTC date string
+isolated function yesterdayUtcDate() returns string {
+    return formatUtcDate(time:utcAddSeconds(time:utcNow(), -86400));
+}
+
+# Formats a UTC instant as "YYYY-MM-DD".
+#
+# + utc - The UTC instant to format
+# + return - The formatted date string
+isolated function formatUtcDate(time:Utc utc) returns string {
+    time:Civil civil = time:utcToCivil(utc);
     string month = civil.month < 10 ? "0" + civil.month.toString() : civil.month.toString();
     string day = civil.day < 10 ? "0" + civil.day.toString() : civil.day.toString();
     return string `${civil.year}-${month}-${day}`;
