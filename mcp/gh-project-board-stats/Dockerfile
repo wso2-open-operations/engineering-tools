@@ -20,13 +20,18 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 
-RUN apt-get update && apt-get install -y curl tar \
+RUN apt-get update && apt-get install -y --no-install-recommends curl tar \
     && curl -L https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_arm64.tar.gz \
     -o /tmp/github-mcp-server.tar.gz \
     && tar -xzf /tmp/github-mcp-server.tar.gz -C /tmp \
     && mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server \
     && chmod +x /usr/local/bin/github-mcp-server \
-    && rm /tmp/github-mcp-server.tar.gz
+    && rm /tmp/github-mcp-server.tar.gz \
+    && apt-get purge -y --auto-remove curl tar \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r app && useradd -r -g app -d /app app
+USER app
 
 
 ENV MCP_SERVER_PATH=/usr/local/bin/github-mcp-server
