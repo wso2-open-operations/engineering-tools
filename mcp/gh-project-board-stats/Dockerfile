@@ -21,16 +21,20 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl tar && \
-    if [ "$TARGETARCH" = "amd64" ]; then \
-        MCP_ARCH="x86_64"; \
+    REAL_ARCH="${TARGETARCH:-amd64}" && \
+    REAL_ARCH="${TARGETARCH:-amd64}" && \
+    if [ "$REAL_ARCH" = "amd64" ]; then \
+    MCP_ARCH="x86_64"; \
+    elif [ "$REAL_ARCH" = "arm64" ]; then \
+    MCP_ARCH="arm64"; \
     else \
-        MCP_ARCH="$TARGETARCH"; \
+    echo "Unsupported architecture: $REAL_ARCH" && exit 1; \
     fi && \
-    curl -L https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_${MCP_ARCH}.tar.gz \
+    curl -L "https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_${MCP_ARCH}.tar.gz" \
       -o /tmp/github-mcp-server.tar.gz && \
     tar -xzf /tmp/github-mcp-server.tar.gz -C /tmp && \
     mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server && \
+    ls -l /usr/local/bin/github-mcp-server && \
     chmod +x /usr/local/bin/github-mcp-server && \
     rm /tmp/github-mcp-server.tar.gz && \
     rm -rf /var/lib/apt/lists/*

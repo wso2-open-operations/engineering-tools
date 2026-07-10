@@ -96,7 +96,9 @@ async function main() {
 
             return res.json({
                 count: releases.length,
-                releases
+                releases: releases.map(
+                    (release: any) => release.content.title
+                )
             });
 
         } catch (error: any) {
