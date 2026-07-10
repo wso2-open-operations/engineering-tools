@@ -89,6 +89,9 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
     entity:Repository repository = check entity:getRepository(org, name);
     entity:Release[] releases = check entity:getAllReleases(org, name);
 
+    // Single UTC instant for all of this repo's date math.
+    time:Utc now = time:utcNow();
+
     // snapshot_date is stamped with the cron's run date (today), matching the
     // convention already baked into the migrated historical data (see
     // resources/migrations — legacy rows use DATE(created_at), i.e. the sync date,
@@ -97,7 +100,7 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
     // the END of the PREVIOUS day — GitHub's API only reports a running cumulative
     // count, so a same-day delta can never exist. Downstream consumers must treat
     // "this row's delta" as "yesterday's real activity, labeled with today's date."
-    string snapshotDate = currentUtcDate();
+    string snapshotDate = formatUtcDate(now);
 
     // Soft dependency: clone traffic needs Administration:read; store 0 if unavailable.
     // GitHub's clone count/uniques for the current UTC day are cumulative-and-partial
@@ -108,7 +111,7 @@ isolated function syncRepository(database:TrackedRepository repo) returns error?
     int cloneUniques = 0;
     entity:ClonesTraffic|error clones = entity:getClonesTraffic(org, name);
     if clones is entity:ClonesTraffic {
-        string yesterday = yesterdayUtcDate();
+        string yesterday = formatUtcDate(time:utcAddSeconds(now, -86400));
         foreach entity:CloneRecord cloneRecord in clones.clones {
             if cloneRecord.timestamp.startsWith(yesterday) {
                 cloneCount = cloneRecord.count;
@@ -190,23 +193,6 @@ isolated function toPrefixes(json prefixes) returns string[] {
         }
     }
     return result;
-}
-
-# Today's date in UTC as "YYYY-MM-DD", used as the snapshot_date for each sync run
-# — matching the historical/migrated data convention (sync date, not data date).
-#
-# + return - The current UTC date string
-isolated function currentUtcDate() returns string {
-    return formatUtcDate(time:utcNow());
-}
-
-# Yesterday's date in UTC as "YYYY-MM-DD" — the most recent fully-complete day, used
-# to match GitHub's clone-traffic record so the count/uniques stored aren't a
-# still-accumulating partial-day value.
-#
-# + return - Yesterday's UTC date string
-isolated function yesterdayUtcDate() returns string {
-    return formatUtcDate(time:utcAddSeconds(time:utcNow(), -86400));
 }
 
 # Formats a UTC instant as "YYYY-MM-DD".
