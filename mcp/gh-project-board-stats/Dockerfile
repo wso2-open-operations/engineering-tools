@@ -10,7 +10,7 @@ COPY . .
 
 RUN npm run build
 
-FROM node:22-bookworm
+FROM node:22-bookworm-slim
 
 ARG TARGETARCH
 
@@ -21,6 +21,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends curl tar && \
     REAL_ARCH="${TARGETARCH:-amd64}" && \
     if [ "$REAL_ARCH" = "amd64" ]; then \
