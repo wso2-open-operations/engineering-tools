@@ -22,7 +22,7 @@ COPY --from=builder /app/dist ./dist
 
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends curl tar && \
+    apt-get install -y --no-install-recommends curl tar ca-certificates && \
     REAL_ARCH="${TARGETARCH:-amd64}" && \
     if [ "$REAL_ARCH" = "amd64" ]; then \
     MCP_ARCH="x86_64"; \
