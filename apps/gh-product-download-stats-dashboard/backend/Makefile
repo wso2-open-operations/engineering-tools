@@ -8,6 +8,9 @@ all: build
 setup:
 	git -C "$(shell git rev-parse --show-toplevel)" config core.hooksPath .githooks
 
+fmt:
+	go fmt ./...
+
 vet:
 	go vet ./...
 
@@ -19,3 +22,6 @@ build: test
 
 clean:
 	rm -f $(BINARY)
+
+run: fmt
+	go run ./cmd/server
