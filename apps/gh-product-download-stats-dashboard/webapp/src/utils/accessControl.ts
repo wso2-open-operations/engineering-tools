@@ -15,7 +15,7 @@
 // under the License.
 
 // Decodes a JWT payload (no signature verification — the backend is the enforcer;
-// this is only for UX gating of the Admin panel).
+// this is only for reading display claims like name/email client-side).
 export function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split(".");
   if (parts.length < 2) return null;
@@ -35,32 +35,4 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
   } catch {
     return null;
   }
-}
-
-// Extracts the groups claim from a decoded token payload as a string array.
-export function extractGroups(payload: Record<string, unknown> | null): string[] {
-  if (!payload) return [];
-  const groups = payload.groups;
-  if (Array.isArray(groups)) {
-    return groups.filter((g): g is string => typeof g === "string");
-  }
-  if (typeof groups === "string" && groups.trim() !== "") {
-    return [groups];
-  }
-  return [];
-}
-
-// The admin group names from runtime config (comma-separated).
-export function getAdminGroups(): string[] {
-  const raw = window.config?.GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_ADMIN_GROUPS ?? "";
-  return raw
-    .split(",")
-    .map((g) => g.trim())
-    .filter(Boolean);
-}
-
-// True when the user's groups intersect the configured admin groups.
-export function userIsAdmin(userGroups: string[], adminGroups: string[]): boolean {
-  if (adminGroups.length === 0) return false;
-  return userGroups.some((g) => adminGroups.includes(g));
 }

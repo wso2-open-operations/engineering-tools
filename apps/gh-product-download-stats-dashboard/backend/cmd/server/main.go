@@ -81,6 +81,7 @@ func run() int {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	mux.HandleFunc("GET /api/v1/user-info", adminHandler.UserInfo)
 	mux.HandleFunc("GET /api/v1/repositories", repositoryHandler.ListRepositories)
 	mux.HandleFunc("GET /api/v1/stats/summary", statsHandler.GetSummary)
 	mux.HandleFunc("GET /api/v1/stats/total", statsHandler.GetTotal)

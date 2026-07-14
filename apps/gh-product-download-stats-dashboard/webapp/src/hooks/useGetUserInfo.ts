@@ -14,17 +14,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Query-key roots for TanStack Query caches.
-export const ApiQueryKeys = {
-  USER_INFO: "user-info",
-  SUMMARY: "summary",
-  REPOSITORIES: "repositories",
-  ADMIN_REPOSITORIES: "admin-repositories",
-  TOTAL_SERIES: "total-series",
-  DAILY_SERIES: "daily-series",
-  METRIC_SERIES: "metric-series",
-  CLONE_SERIES: "clone-series",
-  VERSION_BREAKDOWN: "version-breakdown",
-  ASSET_BREAKDOWN: "asset-breakdown",
-  SYNC_LOGS: "sync-logs",
-} as const;
+import { type UseQueryResult } from "@tanstack/react-query";
+import { useApiQuery } from "@hooks/useApiQuery";
+import { ApiQueryKeys } from "@constants/apiConstants";
+
+// The signed-in caller's identity and privileges, as computed by the backend.
+export interface UserInfo {
+  email: string;
+  isAdmin: boolean;
+}
+
+// GET /api/v1/user-info — isAdmin is decided server-side against the backend's
+// ADMIN_GROUPS env var, so admin group names never appear in frontend config.
+export function useGetUserInfo(): UseQueryResult<UserInfo, Error> {
+  return useApiQuery<UserInfo>([ApiQueryKeys.USER_INFO], "/user-info");
+}

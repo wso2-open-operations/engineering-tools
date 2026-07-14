@@ -73,7 +73,7 @@ function mergeSeries(
 export default function SeriesChart({
   series,
   variant = "line",
-  height = 320,
+  height = 360,
   isLoading,
   isError,
   emptyTitle = "No data for the selected range",
@@ -103,7 +103,9 @@ export default function SeriesChart({
     yAxis: { show: false },
     legend: { show: true },
     tooltip: { show: true },
-    margin: { top: 8, right: 16, bottom: 8, left: 8 },
+    // Extra vertical margin keeps the plot clear of the tooltip, which can
+    // grow tall when many products (series) are shown at once.
+    margin: { top: 16, right: 16, bottom: 16, left: 8 },
   } as const;
 
   return (

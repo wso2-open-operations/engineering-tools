@@ -6,6 +6,4 @@ window.config = {
   GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_BACKEND_BASE_URL: "http://localhost:8080",
   GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_THEME: "acrylicOrange",
   GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_LOG_LEVEL: "ERROR",
-  // Comma-separated Asgardeo group names allowed to see/use the Admin panel.
-  GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_ADMIN_GROUPS: "gh-stats-admins",
 };

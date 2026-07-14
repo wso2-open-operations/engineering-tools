@@ -27,7 +27,6 @@ App runs at `http://localhost:3000`. Runtime config is read from `public/config.
 | `GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_BACKEND_BASE_URL`           | Dashboard backend base URL (Choreo gateway URL in prod)                             |
 | `GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_THEME`                      | Oxygen theme: `acrylicOrange` (default), `acrylicPurple`, `highContrast`, `classic` |
 | `GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_LOG_LEVEL`                  | `DEBUG` / `INFO` / `WARN` / `ERROR` / `NONE`                                        |
-| `GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_ADMIN_GROUPS`               | Comma-separated Asgardeo group names allowed to see the Admin panel                 |
 
 ## Scripts
 
@@ -44,8 +43,10 @@ npm run preview   # preview the production build
 Asgardeo Authorization-Code + PKCE in the SPA. `useAuthApiClient` attaches a fresh ID
 token as `Authorization: Bearer <token>`; in production the Choreo gateway converts this
 to the `x-jwt-assertion` header the backend validates. The **Admin** nav/route is shown
-only when the user's ID-token `groups` intersect `GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_ADMIN_GROUPS` — the
-backend independently enforces admin access (see the repo-root `auth.md`).
+only when the backend's `GET /user-info` reports `isAdmin: true` — admin group names
+live solely in the backend's `ADMIN_GROUPS` environment variable, never in frontend
+config, and the backend independently enforces admin access on every `/admin` endpoint
+(see the repo-root `auth.md`).
 
 ## Pages
 

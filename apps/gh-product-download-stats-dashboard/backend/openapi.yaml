@@ -279,6 +279,27 @@ paths:
       security: []
       responses:
         '200': { description: OK }
+  /api/v1/user-info:
+    get:
+      summary: The signed-in caller's identity and privileges
+      description: >
+        isAdmin is computed server-side against the ADMIN_GROUPS environment
+        variable, so the frontend can gate its Admin UI without knowing the
+        admin group names.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  email: { type: string }
+                  isAdmin: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
   /api/v1/repositories:
     get:
       summary: List tracked repositories with their latest stats

@@ -15,36 +15,16 @@
 // under the License.
 
 import { describe, it, expect } from "vitest";
-import {
-  extractGroups,
-  userIsAdmin,
-  decodeJwtPayload,
-} from "@utils/accessControl";
+import { decodeJwtPayload } from "@utils/accessControl";
 
 describe("accessControl", () => {
-  it("extractGroups handles array, string, and missing claims", () => {
-    expect(extractGroups({ groups: ["a", "b"] })).toEqual(["a", "b"]);
-    expect(extractGroups({ groups: "a" })).toEqual(["a"]);
-    expect(extractGroups({})).toEqual([]);
-    expect(extractGroups(null)).toEqual([]);
-  });
-
-  it("userIsAdmin requires intersection with non-empty admin groups", () => {
-    expect(userIsAdmin(["x", "gh-stats-admins"], ["gh-stats-admins"])).toBe(true);
-    expect(userIsAdmin(["x"], ["gh-stats-admins"])).toBe(false);
-    expect(userIsAdmin(["gh-stats-admins"], [])).toBe(false);
-  });
-
   it("decodeJwtPayload returns the payload claims", () => {
-    // header.payload.signature with payload {"groups":["gh-stats-admins"],"email":"a@b.com"}
-    const payload = btoa(
-      JSON.stringify({ groups: ["gh-stats-admins"], email: "a@b.com" }),
-    )
+    // header.payload.signature with payload {"email":"a@b.com"}
+    const payload = btoa(JSON.stringify({ email: "a@b.com" }))
       .replace(/\+/g, "-")
       .replace(/\//g, "_");
     const token = `header.${payload}.sig`;
-    const decoded = decodeJwtPayload(token);
-    expect(extractGroups(decoded)).toEqual(["gh-stats-admins"]);
+    expect(decodeJwtPayload(token)).toEqual({ email: "a@b.com" });
   });
 
   it("decodeJwtPayload returns null for malformed tokens", () => {
