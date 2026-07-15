@@ -14,86 +14,95 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import process from "process";
-import {
-    getIterationValue,
-    isMatchingIteration
-} from "../services/iteration.service";
+import { getIterationValue, isMatchingIteration } from "../services/iteration.service";
 import { getFieldId } from "../services/projectField.service";
-import { isRelease, belongsToFunction }
-    from "../services/release.service";
+import { isRelease, belongsToFunction } from "../services/release.service";
+import { dbPool } from "../database/mysql";
 
-export async function runTool(client: any, route: any) {
-    const personalOwner = process.env.GITHUB_OWNER ?? process.env.USER ?? process.env.LOGNAME;
-    if (!personalOwner) throw new Error("Missing GITHUB_OWNER (or USER/LOGNAME) env var");
+interface RuntimeTarget {
+    owner: string;
+    projectNumber: number;
+}
 
-    const personalProjectNumber = Number(process.env.PROJECT_ID);
-    if (!Number.isFinite(personalProjectNumber)) {
-        throw new Error("Missing or invalid PROJECT_ID env var");
+export async function runTool(client: any, route: any, target: RuntimeTarget) {
+
+    const [metaRows]: any = await dbPool.execute(
+        "SELECT layout_type, release_column_name FROM project_board_metadata WHERE project_id = ?",
+        [target.projectNumber]
+    );
+
+    let layoutType = "ITERATION_BASED";
+    let fallbackColumn = "Done";
+
+    if (metaRows.length > 0) {
+        layoutType = metaRows[0].layout_type;
+        fallbackColumn = metaRows[0].release_column_name;
     }
 
     const fieldsResult = await client.callTool({
         name: "projects_list",
         arguments: {
             method: "list_project_fields",
-            owner: personalOwner,
-            project_number: personalProjectNumber
+            owner: target.owner,
+            project_number: target.projectNumber
         }
     });
 
-    const fieldsText =
-        fieldsResult.content
-            ?.map((c: any) => c.text)
-            .join("\n") ?? "";
-
+    const fieldsText = fieldsResult.content?.map((c: any) => c.text).join("\n") ?? "";
     const projectFields = JSON.parse(fieldsText);
 
-    const iterationFieldId =
-        getFieldId(
-            projectFields.fields,
-            "Iteration"
-        );
+    let targetItems: any[] = [];
 
-    const result = await client.callTool({
-        name: "projects_list",
-        arguments: {
-            method: "list_project_items",
-            owner: personalOwner,
-            project_number: personalProjectNumber,
-            per_page: 50,
-            fields: [iterationFieldId]
+    if (layoutType === "ITERATION_BASED") {
+        const iterationFieldId = getFieldId(projectFields.fields, "Iteration");
+
+        const result = await client.callTool({
+            name: "projects_list",
+            arguments: {
+                method: "list_project_items",
+                owner: target.owner,
+                project_number: target.projectNumber,
+                per_page: 50,
+                fields: [iterationFieldId]
+            }
+        });
+
+        const text = result.content?.map((c: any) => c.text).join("\n") ?? "";
+        const rawData = JSON.parse(text);
+        targetItems = rawData.items ?? [];
+    } else {
+
+        const statusFieldId = getFieldId(projectFields.fields, "Status");
+
+        const result = await client.callTool({
+            name: "projects_list",
+            arguments: {
+                method: "list_project_items",
+                owner: target.owner,
+                project_number: target.projectNumber,
+                per_page: 50,
+                fields: [statusFieldId]
+            }
+        });
+
+        const text = result.content?.map((c: any) => c.text).join("\n") ?? "";
+        const rawData = JSON.parse(text);
+        targetItems = rawData.items ?? [];
+    }
+
+    return targetItems.filter((item: any) => {
+        if (!isRelease(item)) return false;
+
+        if (route?.args?.function && !belongsToFunction(item, route.args.function)) {
+            return false;
+        }
+
+        if (layoutType === "ITERATION_BASED") {
+            const iteration = getIterationValue(item);
+            return isMatchingIteration(iteration, route?.args?.iteration);
+        } else {
+            const statusValue = item.fields?.find((f: any) => f.name.toLowerCase() === "status")?.value;
+            return String(statusValue).toLowerCase() === fallbackColumn.toLowerCase();
         }
     });
-
-
-    const text = result.content?.map((c: any) => c.text).join("\n") ?? "";
-    if (!text) throw new Error("No data returned from MCP");
-
-    const rawData = JSON.parse(text);
-    const items = rawData.items ?? [];
-
-    const releases = items.filter(
-        (item: any) => {
-
-            const iteration =
-                getIterationValue(item);
-
-
-            return (
-                isMatchingIteration(iteration, route?.args?.iteration)
-                &&
-                isRelease(item)
-                &&
-                (
-                    !route?.args?.function ||
-                    belongsToFunction(
-                        item,
-                        route.args.function
-                    )
-                )
-            );
-        }
-    );
-
-    return releases;
 }

@@ -19,94 +19,47 @@ import Anthropic from "@anthropic-ai/sdk";
 function safeParse(text: string) {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("Invalid JSON");
-
   return JSON.parse(match[0]);
 }
 
-export async function routeIntent(
-  anthropic: Anthropic,
-  input: string
-) {
+export async function routeIntent(anthropic: Anthropic, input: string, contextBoardName: string | null) {
   const res = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 150,
+    max_tokens: 300,
     temperature: 0,
-
     system: `
-You are a routing assistant.
+You are an advanced project board routing coordinator. You evaluate user intentions and translate conversational requests into explicit processing targets.
 
-Return ONLY JSON.
+Active Context Parameter:
+- Mapped Target Project Board: ${contextBoardName ?? "NONE (Unknown)"}
 
-Extract:
-- iteration
-- function
+Return ONLY a single valid JSON object. Do not wrap code in text formatting blocks.
 
-Rules:
+Output Response Struct Evaluation Rules:
+1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, or providing confirmation details to initialize a board.
+2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering").
+3. Parameter Extraction Matrix:
+   - "iteration": Capture window markers ("this_week", "next_week"). If the user mentions absolute time indicators like "last month" or custom intervals, output them verbatim. Default to "this_week".
+   - "function": Extract team parameters ("IAM", "People Operations"). If missing, return null.
 
-1. If user mentions:
-"this week"
-"current iteration"
-
-return:
-
+Provide output matching this strict schema structure:
 {
+  "status": "READY" | "REQUIRES_BOARD_SELECTION",
+  "extractedBoardName": string | null,
   "args": {
-    "iteration": "this_week",
-    "function": null
-  }
+    "iteration": string,
+    "function": string | null
+  },
+  "conversationalResponse": string | null
 }
 
-
-2. If user mentions:
-"next week"
-
-return:
-
-{
-  "args": {
-    "iteration": "next_week",
-    "function": null
-  }
-}
-
-
-3. If user explicitly mentions a function/team such as:
-"People Operations"
-"IAM"
-
-extract it.
-
-Example:
-
-User:
-"What are releases this week in People Operations?"
-
-Return:
-
-{
-  "args": {
-    "iteration": "this_week",
-    "function": "People Operations"
-  }
-}
-
-
-Never invent a function.
-If the user does not mention one, return null.
+Behavior States:
+- If context board parameter is "NONE" and user input doesn't mention a distinct board name, flag status as "REQUIRES_BOARD_SELECTION".
+- If the text specifies tracking layout options or answers confirmation selections, populate target fields cleanly.
 `,
-
-    messages: [
-      {
-        role: "user",
-        content: input
-      }
-    ]
+    messages: [{ role: "user", content: input }]
   });
 
-  const text =
-    res.content[0]?.type === "text"
-      ? res.content[0].text
-      : "";
-
+  const text = res.content[0]?.type === "text" ? res.content[0].text : "";
   return safeParse(text);
 }
