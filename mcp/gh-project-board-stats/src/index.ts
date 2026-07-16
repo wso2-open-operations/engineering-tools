@@ -22,13 +22,32 @@ import { routeIntent } from "./agent/routeIntent";
 import { runTool } from "./tools/runTool";
 import { dbPool, initializeDatabase } from "./database/mysql";
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    let timeout: NodeJS.Timeout;
+export interface RoutedIntent {
+    status: "READY" | "REQUIRES_BOARD_SELECTION";
+    extractedBoardName: string | null;
+    args: {
+        iteration: string;
+        function: string | null;
+    };
+    conversationalResponse: string | null;
+}
+
+function withTimeout<T>(
+    timeoutMs: number,
+    operation: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+    const controller = new AbortController();
+
     const timeoutPromise = new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("Request timed out")), timeoutMs);
+        const timeout = setTimeout(() => {
+            controller.abort();
+            reject(new Error("Request timed out"));
+        }, timeoutMs);
+        controller.signal.addEventListener("abort", () => clearTimeout(timeout));
     });
+
     return Promise.race([
-        promise.finally(() => clearTimeout(timeout)),
+        operation(controller.signal),
         timeoutPromise
     ]);
 }
@@ -43,29 +62,49 @@ function getMcpResponseText(result: any): string {
         .join("\n");
 }
 
-async function getProjectIdAndTitleByName(client: any, owner: string, name: string): Promise<{ number: number; title: string } | null> {
+function safeJsonParse(rawText: string): any {
+    const trimmed = rawText.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+        throw new Error(`Invalid non-JSON diagnostic payload returned from MCP backend: ${trimmed.slice(0, 150)}`);
+    }
+    return JSON.parse(trimmed);
+}
+
+async function getProjectIdAndTitleByName(
+    client: any,
+    owner: string,
+    name: string,
+    signal?: AbortSignal
+): Promise<{ number: number; title: string } | null> {
     try {
+        if (signal?.aborted) {
+            throw new Error("Request aborted prior to execution");
+        }
+
         const discovery = await client.callTool({
             name: "projects_list",
             arguments: { method: "list_projects", owner }
         });
 
         const discoveryText = getMcpResponseText(discovery);
-        if (!discoveryText.trim().startsWith('{') && !discoveryText.trim().startsWith('[')) {
-            console.error("MCP Tool Error Output:", discoveryText);
-            return null;
-        }
-
-        const raw = JSON.parse(discoveryText);
-
+        const raw = safeJsonParse(discoveryText);
         const projects = Array.isArray(raw) ? raw : (raw.projects || []);
-        const matched = projects.find((p: any) => p.title.toLowerCase().includes(name.toLowerCase()));
+
+        const matched = projects.find(
+            (p: any) => p.title.toLowerCase().trim() === name.toLowerCase().trim()
+        );
 
         return matched ? { number: matched.number, title: matched.title } : null;
     } catch (err) {
         console.error("Failed to parse project list:", err);
         return null;
     }
+}
+
+function formatIterationLabel(iteration: string): string {
+    if (iteration === 'next_week') return "next week's iteration";
+    if (iteration === 'this_week') return "this week's iteration";
+    return `iteration frame (${iteration})`;
 }
 
 async function main() {
@@ -84,8 +123,11 @@ async function main() {
     app.post("/query", async (req, res) => {
         try {
             const question = req.body?.question;
-            const userId = req.headers["x-user-id"] ? String(req.headers["x-user-id"]) : "default_user";
             const ownerGroup = process.env.GITHUB_OWNER ?? "org-owner";
+            const userId = req.headers["x-authenticated-user"] ? String(req.headers["x-authenticated-user"]) : null;
+            if (!userId) {
+                return res.status(401).json({ error: "Missing identity verification parameter context." });
+            }
 
             if (typeof question !== "string" || !question.trim()) {
                 return res.status(400).json({ error: "Missing or invalid question" });
@@ -101,9 +143,12 @@ async function main() {
             const savedPreference = prefRows[0] || null;
 
             if (session && session.current_state === 'AWAITING_REMEMBER_CONFIRMATION') {
-                const isYes = /yes|yep|sure|yeah/i.test(question);
+                const isYes = /^(yes|yep|sure|yeah|y)$/i.test(question.trim());
+                const targetIteration = session.pending_iteration || 'this_week';
 
-                const projectDetails = await getProjectIdAndTitleByName(client, ownerGroup, session.pending_board_name);
+                const projectDetails = await withTimeout(30000, (signal) =>
+                    getProjectIdAndTitleByName(client, ownerGroup, session.pending_board_name, signal)
+                );
 
                 if (!projectDetails) {
                     await dbPool.execute("DELETE FROM user_session_state WHERE user_id = ?", [userId]);
@@ -114,15 +159,28 @@ async function main() {
 
                 if (isYes) {
                     await dbPool.execute(
+                        "UPDATE user_project_preferences SET is_remembered = 0 WHERE user_id = ?",
+                        [userId]
+                    );
+
+                    await dbPool.execute(
                         "INSERT INTO user_project_preferences (user_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
                         [userId, projectDetails.number, ownerGroup, projectDetails.title, projectDetails.number, projectDetails.title]
                     );
                 }
 
-                const intentArgs = { args: { iteration: session.pending_iteration || 'this_week', function: session.pending_function } };
-                const releases = await withTimeout(
-                    runTool(client, intentArgs, { owner: ownerGroup, projectNumber: projectDetails.number }),
-                    30000
+                const intentArgs: RoutedIntent = {
+                    status: "READY",
+                    extractedBoardName: projectDetails.title,
+                    args: {
+                        iteration: targetIteration,
+                        function: session.pending_function
+                    },
+                    conversationalResponse: null
+                };
+
+                const releases = await withTimeout(30000, (signal) =>
+                    runTool(client, intentArgs, { owner: ownerGroup, projectNumber: projectDetails.number }, signal)
                 );
 
                 const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
@@ -130,7 +188,7 @@ async function main() {
                     ? "Great. I'll remember this board for your future queries!"
                     : "Got it. I won't remember this setting.";
 
-                const responseMsg = `${saveMessage} Let me check the current iteration.\n\nAccording to the current iteration, the planned releases for this week are:\n${releaseList || "• No current releases found."}`;
+                const responseMsg = `${saveMessage} Let me check the target timeline.\n\nAccording to the ${formatIterationLabel(targetIteration)}, the planned releases are:\n${releaseList || "• No active releases found."}`;
 
                 await dbPool.execute("DELETE FROM user_session_state WHERE user_id = ?", [userId]);
                 return res.json({ message: responseMsg });
@@ -145,55 +203,66 @@ async function main() {
                 );
 
                 return res.json({
-                    message: `Got it. I'll use the ${chosenBoard}. Should I remember this board for your future release queries?`
+                    message: `Got it. I'll use the "${chosenBoard}". Should I remember this board for your future release queries?`
                 });
             }
 
             const activeBoardName = savedPreference ? savedPreference.board_name : null;
-            const intent = await routeIntent(anthropic, question, activeBoardName);
+
+            const rawIntent = await routeIntent(anthropic, question, activeBoardName);
+
+            if (!rawIntent || typeof rawIntent !== "object") {
+                throw new Error("Invalid shape: routeIntent did not return a valid object structure");
+            }
+            if (rawIntent.status !== "READY" && rawIntent.status !== "REQUIRES_BOARD_SELECTION") {
+                throw new Error(`Invalid shape: Incorrect status flag value received ("${rawIntent.status}")`);
+            }
+            if (!rawIntent.args || typeof rawIntent.args !== "object") {
+                throw new Error("Invalid shape: Missing internal arguments parameter container object");
+            }
+            if (typeof rawIntent.args.iteration !== "string") {
+                throw new Error("Invalid shape: Missing or malformed iteration string marker value");
+            }
+
+            const intent = rawIntent as RoutedIntent;
+            const resolvedIteration = intent.args?.iteration ?? 'this_week';
 
             if (intent.extractedBoardName) {
-                const projectDetails = await getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName);
+                const projectDetails = await withTimeout(30000, (signal) =>
+                    getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName!, signal)
+                );
 
                 if (projectDetails) {
-                    const releases = await withTimeout(
-                        runTool(client, intent, { owner: ownerGroup, projectNumber: projectDetails.number }),
-                        30000
+                    const releases = await withTimeout(30000, (signal) =>
+                        runTool(client, intent, { owner: ownerGroup, projectNumber: projectDetails.number }, signal)
                     );
                     const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
 
                     return res.json({
-                        message: `Got it. I'll use the ${projectDetails.title}.\n\nAccording to the current iteration, the planned releases for this week are:\n${releaseList || "• No current releases found."}`
-                    });
-                } else {
-                    return res.json({
-                        message: `I could not find a project board matching "${intent.extractedBoardName}". Please select an active board.`
+                        message: `Got it. I'll check the "${projectDetails.title}".\n\nAccording to the ${formatIterationLabel(resolvedIteration)}, the planned releases are:\n${releaseList || "• No active releases found."}`
                     });
                 }
+
+                intent.status = "REQUIRES_BOARD_SELECTION";
             }
 
             if (intent.status === "REQUIRES_BOARD_SELECTION" || !savedPreference) {
-                const discovery = await withTimeout(
-                    client.callTool({ name: "projects_list", arguments: { method: "list_projects", owner: ownerGroup } }),
-                    30000
-                );
+                const discovery = await withTimeout(30000, (signal) => {
+                    if (signal.aborted) return Promise.reject(new Error("Request aborted"));
+                    return client.callTool({
+                        name: "projects_list",
+                        arguments: { method: "list_projects", owner: ownerGroup }
+                    });
+                });
 
                 const discoveryText = getMcpResponseText(discovery);
-                if (!discoveryText.trim().startsWith('{') && !discoveryText.trim().startsWith('[')) {
-                    console.error("GitHub MCP Server rejected request. Diagnostic details:", discoveryText);
-                    return res.status(502).json({
-                        error: "Failed to read projects from GitHub.",
-                        details: discoveryText
-                    });
-                }
-
-                const raw = JSON.parse(discoveryText);
+                const raw = safeJsonParse(discoveryText);
                 const projects = Array.isArray(raw) ? raw : (raw.projects || []);
                 const boardsList = projects.map((p: any) => p.title) ?? [];
 
                 await dbPool.execute(
                     "INSERT INTO user_session_state (user_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
-                    [userId, intent.args?.iteration ?? 'this_week', intent.args?.function ?? null, intent.args?.iteration ?? 'this_week', intent.args?.function ?? null]
+                    [userId, resolvedIteration, intent.args?.function ?? null, resolvedIteration, intent.args?.function ?? null]
                 );
 
                 if (boardsList.length > 0) {
@@ -208,14 +277,13 @@ async function main() {
                 }
             }
 
-            const releases = await withTimeout(
-                runTool(client, intent, { owner: ownerGroup, projectNumber: savedPreference.project_id }),
-                30000
+            const releases = await withTimeout(30000, (signal) =>
+                runTool(client, intent, { owner: ownerGroup, projectNumber: savedPreference.project_id }, signal)
             );
             const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
 
             return res.json({
-                message: `Based on the current iteration in ${savedPreference.board_name}, this week's planned releases are:\n${releaseList || "• No current releases found."}`
+                message: `Based on the active configuration for "${savedPreference.board_name}", the planned releases for the ${formatIterationLabel(resolvedIteration)} are:\n${releaseList || "• No active releases found."}`
             });
 
         } catch (error: any) {

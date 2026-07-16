@@ -50,8 +50,7 @@ export async function initializeDatabase() {
       organization_name VARCHAR(100) NOT NULL,
       board_name VARCHAR(150) NOT NULL,
       is_remembered TINYINT(1) DEFAULT 0,
-      PRIMARY KEY (user_id, project_id),
-      INDEX idx_user_rem (user_id, is_remembered)
+      PRIMARY KEY (user_id)
     );
   `);
 

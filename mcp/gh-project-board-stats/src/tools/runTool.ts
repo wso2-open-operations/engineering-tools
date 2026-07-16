@@ -24,8 +24,30 @@ interface RuntimeTarget {
     projectNumber: number;
 }
 
-export async function runTool(client: any, route: any, target: RuntimeTarget) {
+function getMcpResponseText(result: any): string {
+    if (!result || !result.content || !Array.isArray(result.content)) {
+        return "";
+    }
+    return result.content
+        .filter((c: any) => c && c.type === "text")
+        .map((c: any) => c.text)
+        .join("\n");
+}
 
+function safeJsonParse(rawText: string): any {
+    const trimmed = rawText.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+        throw new Error(`Invalid non-JSON diagnostic payload returned from MCP backend: ${trimmed.slice(0, 150)}`);
+    }
+    return JSON.parse(trimmed);
+}
+
+export async function runTool(
+    client: any,
+    route: any,
+    target: RuntimeTarget,
+    signal?: AbortSignal
+) {
     const [metaRows]: any = await dbPool.execute(
         "SELECT layout_type, release_column_name FROM project_board_metadata WHERE project_id = ?",
         [target.projectNumber]
@@ -46,48 +68,53 @@ export async function runTool(client: any, route: any, target: RuntimeTarget) {
             owner: target.owner,
             project_number: target.projectNumber
         }
-    });
+    }, { signal });
 
-    const fieldsText = fieldsResult.content?.map((c: any) => c.text).join("\n") ?? "";
-    const projectFields = JSON.parse(fieldsText);
-
-    let targetItems: any[] = [];
+    const fieldsText = getMcpResponseText(fieldsResult);
+    const projectFields = safeJsonParse(fieldsText);
+    const activeFieldIds: string[] = [];
 
     if (layoutType === "ITERATION_BASED") {
         const iterationFieldId = getFieldId(projectFields.fields, "Iteration");
-
-        const result = await client.callTool({
-            name: "projects_list",
-            arguments: {
-                method: "list_project_items",
-                owner: target.owner,
-                project_number: target.projectNumber,
-                per_page: 50,
-                fields: [iterationFieldId]
-            }
-        });
-
-        const text = result.content?.map((c: any) => c.text).join("\n") ?? "";
-        const rawData = JSON.parse(text);
-        targetItems = rawData.items ?? [];
+        if (iterationFieldId) activeFieldIds.push(iterationFieldId);
     } else {
-
         const statusFieldId = getFieldId(projectFields.fields, "Status");
+        if (statusFieldId) activeFieldIds.push(statusFieldId);
+    }
 
+    if (route?.args?.function) {
+        const functionFieldId = getFieldId(projectFields.fields, "Function");
+        if (functionFieldId) activeFieldIds.push(functionFieldId);
+    }
+    let targetItems: any[] = [];
+    let hasNextPage = true;
+    let currentPage = 1;
+    const itemsPerPage = 50;
+
+    while (hasNextPage) {
         const result = await client.callTool({
             name: "projects_list",
             arguments: {
                 method: "list_project_items",
                 owner: target.owner,
                 project_number: target.projectNumber,
-                per_page: 50,
-                fields: [statusFieldId]
+                per_page: itemsPerPage,
+                page: currentPage,
+                fields: activeFieldIds
             }
-        });
+        }, { signal });
 
-        const text = result.content?.map((c: any) => c.text).join("\n") ?? "";
-        const rawData = JSON.parse(text);
-        targetItems = rawData.items ?? [];
+        const text = getMcpResponseText(result);
+        const rawData = safeJsonParse(text);
+        const items = rawData.items ?? [];
+
+        targetItems.push(...items);
+
+        if (items.length < itemsPerPage) {
+            hasNextPage = false;
+        } else {
+            currentPage++;
+        }
     }
 
     return targetItems.filter((item: any) => {
