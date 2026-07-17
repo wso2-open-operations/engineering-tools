@@ -48,7 +48,8 @@ function safeJsonParse(text: string): any {
 export async function runTool(
     client: any,
     route: any,
-    target: RuntimeTarget
+    target: RuntimeTarget,
+    signal?: AbortSignal
 ) {
     const [metaRows]: any = await dbPool.execute(
         `SELECT layout_type, release_column_name
@@ -101,6 +102,12 @@ export async function runTool(
     let hasNextPage = true;
 
     while (hasNextPage) {
+
+        if (signal?.aborted) {
+            console.warn("[Warning] runTool: Operation aborted by signal.");
+            break;
+        }
+        
         if (page > MAX_PAGES) {
             console.warn(`[Warning] runTool: Reached maximum safety pagination limit of ${MAX_PAGES} pages. Halting loop to prevent an infinite run.`);
             break;
