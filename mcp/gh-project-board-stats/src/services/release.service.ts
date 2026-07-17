@@ -14,53 +14,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { getProjectFieldValue }
-    from "./projectItem.service";
 
+import { getProjectFieldValue } from "./projectItem.service";
 
-export function isRelease(item: any) {
+export function isRelease(item: any): boolean {
+    const labels = item.content?.labels ?? [];
 
-    const labels =
-        item.content?.labels ?? [];
-
-
-    return labels.some(
-        (label: any) => {
-
-            const labelName =
-                typeof label === "string"
-                    ? label
-                    : label?.name ?? "";
-
-
-            return labelName
-                .toLowerCase()
-                .includes("new feature");
-        }
-    );
+    return labels.some((label: any) => {
+        const labelName = typeof label === "string" ? label : label?.name ?? "";
+        return labelName.toLowerCase().includes("new feature");
+    });
 }
 
-export function belongsToFunction(
-    item: any,
-    functionName: string
-) {
-
-    const functionValue =
-        getProjectFieldValue(
-            item,
-            "Function"
-        );
-
+export function belongsToFunction(item: any, functionName: string): boolean {
+    const functionValue = getProjectFieldValue(item, "Function");
 
     if (!functionValue) {
         return false;
     }
 
-
-    return (
-        String(functionValue)
-            .toLowerCase()
-        ===
-        functionName.toLowerCase()
-    );
+    return String(functionValue).toLowerCase() === functionName.toLowerCase();
 }
