@@ -46,13 +46,24 @@ export async function initializeDatabase() {
 
   if (process.env.RUN_MIGRATIONS === 'true') {
     await dbPool.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        github_id VARCHAR(100) NOT NULL,
+        email VARCHAR(150) NOT NULL,
+        encrypted_access_token TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (github_id),
+        UNIQUE KEY uk_email (email)
+      );
+    `);
+
+    await dbPool.execute(`
       CREATE TABLE IF NOT EXISTS user_project_preferences (
-        user_id VARCHAR(100) NOT NULL,
+        github_id VARCHAR(100) NOT NULL,
         project_id INT NOT NULL,
         organization_name VARCHAR(100) NOT NULL,
         board_name VARCHAR(150) NOT NULL,
         is_remembered TINYINT(1) DEFAULT 0,
-        PRIMARY KEY (user_id)
+        PRIMARY KEY (github_id)
       );
     `);
 
@@ -66,7 +77,7 @@ export async function initializeDatabase() {
 
     await dbPool.execute(`
       CREATE TABLE IF NOT EXISTS user_session_state (
-        user_id VARCHAR(100) PRIMARY KEY,
+        github_id VARCHAR(100) PRIMARY KEY,
         current_state VARCHAR(50) NOT NULL,
         pending_board_name VARCHAR(150),
         pending_iteration VARCHAR(50),

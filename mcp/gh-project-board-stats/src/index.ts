@@ -32,6 +32,26 @@ export interface RoutedIntent {
     conversationalResponse: string | null;
 }
 
+function extractClaimsFromJwt(jwtAssertion: string): { githubId: string; email: string } | null {
+    try {
+        const parts = jwtAssertion.split('.');
+        if (parts.length !== 3) return null;
+
+        const payloadJson = Buffer.from(parts[1], 'base64').toString('utf-8');
+        const payload = JSON.parse(payloadJson);
+
+        const githubId = payload.github_id || payload.sub;
+        const email = payload.email;
+
+        if (!githubId || !email) return null;
+
+        return { githubId: String(githubId).trim(), email: String(email).trim() };
+    } catch (err) {
+        console.error("Failed to decode JWT assertion claims:", err);
+        return null;
+    }
+}
+
 function withTimeout<T>(
     timeoutMs: number,
     operation: (signal: AbortSignal) => Promise<T>
@@ -130,21 +150,31 @@ async function main() {
             const question = req.body?.question;
             const ownerGroup = process.env.GITHUB_OWNER ?? "org-owner";
 
-            const rawUserHeader = req.headers["x-authenticated-user"];
-            const userId = rawUserHeader ? String(rawUserHeader).trim() : null;
-
-            if (!userId || !/^[a-zA-Z0-9_\-]+$/.test(userId)) {
-                return res.status(401).json({ error: "Missing or invalid identity verification parameter context." });
+            const jwtAssertion = req.headers["x-jwt-assertion"];
+            if (!jwtAssertion || typeof jwtAssertion !== "string") {
+                return res.status(401).json({ error: "Missing identity assertion context token." });
             }
+
+            const claims = extractClaimsFromJwt(jwtAssertion);
+            if (!claims || !/^[a-zA-Z0-9_\-]+$/.test(claims.githubId)) {
+                return res.status(401).json({ error: "Invalid identity verification parameters." });
+            }
+
+            const { githubId, email } = claims;
 
             if (typeof question !== "string" || !question.trim()) {
                 return res.status(400).json({ error: "Missing or invalid question" });
             }
 
-            const [sessionRows]: any = await dbPool.execute("SELECT * FROM user_session_state WHERE user_id = ?", [userId]);
+            await dbPool.execute(
+                "INSERT INTO users (github_id, email) VALUES (?, ?) ON DUPLICATE KEY UPDATE email = ?",
+                [githubId, email, email]
+            );
+
+            const [sessionRows]: any = await dbPool.execute("SELECT * FROM user_session_state WHERE github_id = ?", [githubId]);
             const [prefRows]: any = await dbPool.execute(
-                "SELECT project_id, board_name FROM user_project_preferences WHERE user_id = ? AND is_remembered = 1",
-                [userId]
+                "SELECT project_id, board_name FROM user_project_preferences WHERE github_id = ? AND is_remembered = 1",
+                [githubId]
             );
 
             const session = sessionRows[0] || null;
@@ -159,7 +189,7 @@ async function main() {
                 );
 
                 if (!projectDetails) {
-                    await dbPool.execute("DELETE FROM user_session_state WHERE user_id = ?", [userId]);
+                    await dbPool.execute("DELETE FROM user_session_state WHERE github_id = ?", [githubId]);
                     return res.json({
                         message: `I couldn't locate the board "${session.pending_board_name}" on GitHub anymore. Let's restart.`
                     });
@@ -167,13 +197,13 @@ async function main() {
 
                 if (isYes) {
                     await dbPool.execute(
-                        "UPDATE user_project_preferences SET is_remembered = 0 WHERE user_id = ?",
-                        [userId]
+                        "UPDATE user_project_preferences SET is_remembered = 0 WHERE github_id = ?",
+                        [githubId]
                     );
 
                     await dbPool.execute(
-                        "INSERT INTO user_project_preferences (user_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
-                        [userId, projectDetails.number, ownerGroup, projectDetails.title, projectDetails.number, projectDetails.title]
+                        "INSERT INTO user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE project_id=?, board_name=?, is_remembered=1",
+                        [githubId, projectDetails.number, ownerGroup, projectDetails.title, projectDetails.number, projectDetails.title]
                     );
                 }
 
@@ -198,7 +228,7 @@ async function main() {
 
                 const responseMsg = `${saveMessage} Let me check the target timeline.\n\nAccording to the ${formatIterationLabel(targetIteration)}, the planned releases are:\n${releaseList || "• No active releases found."}`;
 
-                await dbPool.execute("DELETE FROM user_session_state WHERE user_id = ?", [userId]);
+                await dbPool.execute("DELETE FROM user_session_state WHERE github_id = ?", [githubId]);
                 return res.json({ message: responseMsg });
             }
 
@@ -216,8 +246,8 @@ async function main() {
                 }
 
                 await dbPool.execute(
-                    "UPDATE user_session_state SET current_state = 'AWAITING_REMEMBER_CONFIRMATION', pending_board_name = ? WHERE user_id = ?",
-                    [projectDetails.title, userId]
+                    "UPDATE user_session_state SET current_state = 'AWAITING_REMEMBER_CONFIRMATION', pending_board_name = ? WHERE github_id = ?",
+                    [projectDetails.title, githubId]
                 );
 
                 return res.json({
@@ -279,8 +309,8 @@ async function main() {
                 const boardsList = projects.map((p: any) => p.title) ?? [];
 
                 await dbPool.execute(
-                    "INSERT INTO user_session_state (user_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
-                    [userId, resolvedIteration, intent.args?.function ?? null, resolvedIteration, intent.args?.function ?? null]
+                    "INSERT INTO user_session_state (github_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
+                    [githubId, resolvedIteration, intent.args?.function ?? null, resolvedIteration, intent.args?.function ?? null]
                 );
 
                 if (boardsList.length > 0) {
