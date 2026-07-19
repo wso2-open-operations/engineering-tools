@@ -25,20 +25,23 @@ interface RuntimeTarget {
 }
 
 function getMcpResponseText(result: any): string {
-    if (!result || !result.content || !Array.isArray(result.content)) {
+    if (!result?.content || !Array.isArray(result.content)) {
         return "";
     }
+
     return result.content
-        .filter((c: any) => c && c.type === "text")
+        .filter((c: any) => c.type === "text")
         .map((c: any) => c.text)
         .join("\n");
 }
 
-function safeJsonParse(rawText: string): any {
-    const trimmed = rawText.trim();
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-        throw new Error(`Invalid non-JSON diagnostic payload returned from MCP backend: ${trimmed.slice(0, 150)}`);
+function safeJsonParse(text: string): any {
+    const trimmed = text.trim();
+
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+        throw new Error(`Invalid MCP response:\n${trimmed}`);
     }
+
     return JSON.parse(trimmed);
 }
 
@@ -49,17 +52,21 @@ export async function runTool(
     signal?: AbortSignal
 ) {
     const [metaRows]: any = await dbPool.execute(
-        "SELECT layout_type, release_column_name FROM project_board_metadata WHERE project_id = ?",
+        `SELECT layout_type, release_column_name
+         FROM project_board_metadata
+         WHERE project_id = ?`,
         [target.projectNumber]
     );
 
-    let layoutType = "ITERATION_BASED";
-    let fallbackColumn = "Done";
+    const layoutType =
+        metaRows.length > 0
+            ? metaRows[0].layout_type
+            : "ITERATION_BASED";
 
-    if (metaRows.length > 0) {
-        layoutType = metaRows[0].layout_type;
-        fallbackColumn = metaRows[0].release_column_name;
-    }
+    const releaseColumn =
+        metaRows.length > 0
+            ? metaRows[0].release_column_name
+            : "Done";
 
     const fieldsResult = await client.callTool({
         name: "projects_list",
@@ -68,73 +75,97 @@ export async function runTool(
             owner: target.owner,
             project_number: target.projectNumber
         }
-    }, { signal });
+    });
 
-    const fieldsText = getMcpResponseText(fieldsResult);
-    const projectFields = safeJsonParse(fieldsText);
-    const activeFieldIds: string[] = [];
+    const fields = safeJsonParse(getMcpResponseText(fieldsResult));
+
+    const fieldIds: string[] = [];
 
     if (layoutType === "ITERATION_BASED") {
-        const iterationFieldId = getFieldId(projectFields.fields, "Iteration");
-        if (iterationFieldId) activeFieldIds.push(iterationFieldId);
+        const id = getFieldId(fields.fields, "Iteration");
+        if (id) fieldIds.push(id);
     } else {
-        const statusFieldId = getFieldId(projectFields.fields, "Status");
-        if (statusFieldId) activeFieldIds.push(statusFieldId);
+        const id = getFieldId(fields.fields, "Status");
+        if (id) fieldIds.push(id);
     }
 
     if (route?.args?.function) {
-        const functionFieldId = getFieldId(projectFields.fields, "Function");
-        if (functionFieldId) activeFieldIds.push(functionFieldId);
+        const id = getFieldId(fields.fields, "Function");
+        if (id) fieldIds.push(id);
     }
-    let targetItems: any[] = [];
-    let hasNextPage = true;
-    let currentPage = 1;
-    const itemsPerPage = 50;
+
+    const allItems: any[] = [];
+
+    let page = 1;
+    const PER_PAGE = 50;
     const MAX_PAGES = 10;
+    let hasNextPage = true;
 
     while (hasNextPage) {
-        if (currentPage > MAX_PAGES) {
-            console.warn(`runTool: Reached maximum safety limit of ${MAX_PAGES} pages. Halting pagination.`);
+
+        if (signal?.aborted) {
+            console.warn("[Warning] runTool: Operation aborted by signal.");
             break;
         }
-        const result = await client.callTool({
+        
+        if (page > MAX_PAGES) {
+            console.warn(`[Warning] runTool: Reached maximum safety pagination limit of ${MAX_PAGES} pages. Halting loop to prevent an infinite run.`);
+            break;
+        }
+
+        const itemsResult = await client.callTool({
             name: "projects_list",
             arguments: {
                 method: "list_project_items",
                 owner: target.owner,
                 project_number: target.projectNumber,
-                per_page: itemsPerPage,
-                page: currentPage,
-                fields: activeFieldIds
+                page,
+                per_page: PER_PAGE,
+                fields: fieldIds
             }
-        }, { signal });
+        });
 
-        const text = getMcpResponseText(result);
-        const rawData = safeJsonParse(text);
-        const items = rawData.items ?? [];
+        const parsed = safeJsonParse(getMcpResponseText(itemsResult));
+        const items = parsed.items ?? [];
 
-        targetItems.push(...items);
+        allItems.push(...items);
 
-        if (items.length < itemsPerPage) {
+        if (items.length < PER_PAGE) {
             hasNextPage = false;
         } else {
-            currentPage++;
+            page++;
         }
     }
 
-    return targetItems.filter((item: any) => {
-        if (!isRelease(item)) return false;
+    return allItems.filter((item: any) => {
+        if (!isRelease(item)) {
+            return false;
+        }
 
-        if (route?.args?.function && !belongsToFunction(item, route.args.function)) {
+        if (
+            route?.args?.function &&
+            !belongsToFunction(item, route.args.function)
+        ) {
             return false;
         }
 
         if (layoutType === "ITERATION_BASED") {
             const iteration = getIterationValue(item);
-            return isMatchingIteration(iteration, route?.args?.iteration);
-        } else {
-            const statusValue = item.fields?.find((f: any) => f.name.toLowerCase() === "status")?.value;
-            return String(statusValue).toLowerCase() === fallbackColumn.toLowerCase();
+            return isMatchingIteration(
+                iteration,
+                route?.args?.iteration
+            );
         }
+
+        const status =
+            item.fields?.find(
+                (f: any) =>
+                    f.name?.toLowerCase() === "status"
+            )?.value ?? "";
+
+        return (
+            String(status).toLowerCase() ===
+            releaseColumn.toLowerCase()
+        );
     });
 }

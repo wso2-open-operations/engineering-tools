@@ -5,7 +5,8 @@ info:
   version: 1.0.0
   description: >
     Backend service for querying GitHub Project board statistics through the GitHub MCP integration.
-    All endpoints except /health require a valid JWT (x-jwt-assertion header injected by the Choreo gateway).
+    All endpoints except /health require a valid JWT (x-jwt-assertion header injected by the Choreo gateway)
+    and an identity verification parameter (x-authenticated-user header).
 
 servers:
   - url: /
@@ -16,6 +17,7 @@ components:
       type: apiKey
       in: header
       name: x-jwt-assertion
+      description: JWT token assertions injected by the gateway wrapper.
 
 security:
   - jwtAssertion: []
@@ -24,14 +26,23 @@ paths:
   /health:
     get:
       summary: Health check
-      security: []
+      security: [] 
       responses:
         '200':
-          description: OK
+          description: Service is healthy and online.
 
   /query:
     post:
       summary: Query GitHub project releases
+      parameters:
+        - name: x-authenticated-user
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_\-]+$'
+          description: Authenticated user identifier used to match and preserve session records.
+          example: "dev-user-123"
       requestBody:
         required: true
         content:
@@ -46,15 +57,15 @@ paths:
                   minLength: 1
                   pattern: '.*\S.*'
                   description: The query question to ask the AI agent about project releases.
-                  example: "What are releases this week?"
+                  example: "What were the releases from previous week?"
       responses:
         '200':
-          description: Successful response
+          description: Successful query resolution returning the iteration details and active release lists.
         '400':
-          description: Invalid request
+          description: Invalid request payload or blank query.
         '401':
-          description: Unauthorized
+          description: Missing or invalid identity verification headers.
         '504':
-          description: Request timed out
+          description: Target operations or internal GitHub MCP queries timed out (30s limit).
         '500':
-          description: Internal server error
+          description: Internal server database or operational pipeline error.

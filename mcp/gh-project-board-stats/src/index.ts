@@ -102,6 +102,7 @@ async function getProjectIdAndTitleByName(
 }
 
 function formatIterationLabel(iteration: string): string {
+    if (iteration === 'previous_week') return "previous week's iteration";
     if (iteration === 'next_week') return "next week's iteration";
     if (iteration === 'this_week') return "this week's iteration";
     return `iteration frame (${iteration})`;

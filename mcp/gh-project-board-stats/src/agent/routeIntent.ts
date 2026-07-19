@@ -39,7 +39,7 @@ Output Response Struct Evaluation Rules:
 1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, or providing confirmation details to initialize a board.
 2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering").
 3. Parameter Extraction Matrix:
-   - "iteration": Capture window markers ("this_week", "next_week"). If the user mentions absolute time indicators like "last month" or custom intervals, output them verbatim. Default to "this_week".
+   - "iteration": Capture window markers ("this_week", "next_week", "previous_week"). If the user mentions absolute time indicators like "last month" or custom intervals, output them verbatim. Default to "this_week".
    - "function": Extract team parameters ("IAM", "People Operations"). If missing, return null.
 
 Provide output matching this strict schema structure:
