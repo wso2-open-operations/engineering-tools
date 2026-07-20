@@ -5,8 +5,7 @@ info:
   version: 1.0.0
   description: >
     Backend service for querying GitHub Project board statistics through the GitHub MCP integration.
-    All endpoints except /health require a valid JWT (x-jwt-assertion header injected by the Choreo gateway)
-    and an identity verification parameter (x-authenticated-user header).
+    All endpoints except /health require a valid JWT via the x-jwt-assertion header injected by the Choreo gateway.
 
 servers:
   - url: /
@@ -17,7 +16,7 @@ components:
       type: apiKey
       in: header
       name: x-jwt-assertion
-      description: JWT token assertions injected by the gateway wrapper.
+      description: Signed gateway JWT assertion containing user identity claims (email and github_id).
 
 security:
   - jwtAssertion: []
@@ -34,15 +33,6 @@ paths:
   /query:
     post:
       summary: Query GitHub project releases
-      parameters:
-        - name: x-authenticated-user
-          in: header
-          required: true
-          schema:
-            type: string
-            pattern: '^[a-zA-Z0-9_\-]+$'
-          description: Authenticated user identifier used to match and preserve session records.
-          example: "dev-user-123"
       requestBody:
         required: true
         content:
@@ -64,7 +54,7 @@ paths:
         '400':
           description: Invalid request payload or blank query.
         '401':
-          description: Missing or invalid identity verification headers.
+          description: Missing or invalid identity verification headers or token context.
         '504':
           description: Target operations or internal GitHub MCP queries timed out (30s limit).
         '500':

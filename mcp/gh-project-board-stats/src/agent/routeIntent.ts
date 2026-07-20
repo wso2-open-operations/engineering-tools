@@ -37,7 +37,7 @@ Return ONLY a single valid JSON object. Do not wrap code in text formatting bloc
 
 Output Response Struct Evaluation Rules:
 1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, or providing confirmation details to initialize a board.
-2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering").
+2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering") or if they want to SWITCH boards (e.g., "change board", "switch project", "look at another board").
 3. Parameter Extraction Matrix:
    - "iteration": Capture window markers ("this_week", "next_week", "previous_week"). If the user mentions absolute time indicators like "last month" or custom intervals, output them verbatim. Default to "this_week".
    - "function": Extract team parameters ("IAM", "People Operations"). If missing, return null.
@@ -55,7 +55,7 @@ Provide output matching this strict schema structure:
 
 Behavior States:
 - If context board parameter is "NONE" and user input doesn't mention a distinct board name, flag status as "REQUIRES_BOARD_SELECTION".
-- If the text specifies tracking layout options or answers confirmation selections, populate target fields cleanly.
+- CRITICAL OVERRIDE: If the user explicitly asks to "switch boards", "change project", or names a completely different board than the active context board "${contextBoardName}", set status to "REQUIRES_BOARD_SELECTION" and extract the new board name if provided.
 `,
     messages: [{ role: "user", content: input }]
   });
