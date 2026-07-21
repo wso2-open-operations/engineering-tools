@@ -27,7 +27,8 @@ pin the expected markup — refresh them when GitHub changes (commands in
 
 Package scraping is **opt-in per repository**: the scraper reads
 `tracked_repositories` (the shared source of truth) and covers only rows with
-`is_active = 1 AND track_packages = 1` (flag added by migration `000009`).
+`is_active = 1 AND track_packages = 1` (flag added by migration
+`migrations/000002_add_track_packages_flag.sql`).
 Most tracked repos publish no GitHub packages — or publish elsewhere, e.g.
 DockerHub — so they stay opted out. Enable/disable a repo with:
 
@@ -38,7 +39,7 @@ WHERE org_name = '<org>' AND repo_name = '<repo>';
 
 ## What gets written
 
-Tables from migration `000008` (in `operations/gh-product-stats-db-sync/resources/migrations/`):
+Tables from migration `migrations/000001_add_package_snapshot_tables.sql`:
 
 - `package_daily_snapshots` — one row per package per day with the **exact**
   total. This is the authoritative package number; it must never be derived
