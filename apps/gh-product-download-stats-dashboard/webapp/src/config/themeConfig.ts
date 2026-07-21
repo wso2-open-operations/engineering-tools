@@ -56,16 +56,18 @@ export const THEME_OPTIONS: { key: ThemeKey; label: string }[] = [
   { key: "highContrast", label: "High Contrast" },
 ];
 
-// True when value is a known theme key.
+// True when value is a known theme key. Uses Object.hasOwn (not `in`) so an
+// inherited Object.prototype name — "toString", "constructor", etc. — from a
+// tampered localStorage/window.config value can't be mistaken for a theme key.
 export function isThemeKey(value: unknown): value is ThemeKey {
-  return typeof value === "string" && value in THEMES;
+  return typeof value === "string" && Object.hasOwn(THEMES, value);
 }
 
 // Normalize a stored/configured key, mapping renamed legacy keys (e.g. the old
 // "choreo") to their current key. Returns undefined for unknown values.
 export function normalizeThemeKey(value: unknown): ThemeKey | undefined {
   if (isThemeKey(value)) return value;
-  if (typeof value === "string" && value in LEGACY_THEME_KEYS) {
+  if (typeof value === "string" && Object.hasOwn(LEGACY_THEME_KEYS, value)) {
     return LEGACY_THEME_KEYS[value];
   }
   return undefined;
