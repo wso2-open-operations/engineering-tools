@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   Download,
   Package,
+  Boxes,
   Star,
   Settings,
 } from "@wso2/oxygen-ui-icons-react";
@@ -36,6 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "overview", label: "Overview", path: ROUTES.OVERVIEW, icon: LayoutDashboard },
   { id: "downloads", label: "Downloads", path: ROUTES.DOWNLOADS, icon: Download },
   { id: "versions", label: "Versions", path: ROUTES.VERSIONS, icon: Package },
+  { id: "packages", label: "Packages", path: ROUTES.PACKAGES, icon: Boxes },
   { id: "github-stats", label: "Repository Stats", path: ROUTES.GITHUB_STATS, icon: Star },
   { id: "admin", label: "Admin", path: ROUTES.ADMIN, icon: Settings, adminOnly: true },
 ];

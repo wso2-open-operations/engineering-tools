@@ -30,6 +30,7 @@ import { ROUTES } from "@constants/common";
 const OverviewPage = lazy(() => import("@features/stats/pages/OverviewPage"));
 const DownloadsPage = lazy(() => import("@features/stats/pages/DownloadsPage"));
 const VersionsPage = lazy(() => import("@features/stats/pages/VersionsPage"));
+const PackagesPage = lazy(() => import("@features/stats/pages/PackagesPage"));
 const RepositoryStatsPage = lazy(() => import("@features/stats/pages/RepositoryStatsPage"));
 const AdminPage = lazy(() => import("@features/repositories/pages/AdminPage"));
 
@@ -45,6 +46,7 @@ export default function App(): JSX.Element {
         <Route path={ROUTES.OVERVIEW} element={<OverviewPage />} />
         <Route path={ROUTES.DOWNLOADS} element={<DownloadsPage />} />
         <Route path={ROUTES.VERSIONS} element={<VersionsPage />} />
+        <Route path={ROUTES.PACKAGES} element={<PackagesPage />} />
         <Route path={ROUTES.GITHUB_STATS} element={<RepositoryStatsPage />} />
         <Route
           path={ROUTES.ADMIN}
