@@ -17,9 +17,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 function safeParse(text: string) {
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("Invalid JSON");
-  return JSON.parse(match[0]);
+  try {
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+
+    return JSON.parse(text);
+  } catch (err) {
+    return {
+      status: "REQUIRES_BOARD_SELECTION",
+      extractedBoardName: null,
+      args: {
+        iteration: "this_week",
+        function: null
+      },
+      conversationalResponse: "I couldn't quite understand that request. Which project board would you like to check?"
+    };
+  }
 }
 
 export async function routeIntent(anthropic: Anthropic, input: string, contextBoardName: string | null) {
