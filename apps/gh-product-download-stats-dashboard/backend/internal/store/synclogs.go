@@ -37,7 +37,7 @@ func (s *Store) ListSyncLogs(ctx context.Context, limit, offset int) ([]SyncJobL
 			SELECT id, ? AS source, status, repos_synced, repos_failed, error_message, started_at, completed_at, created_at
 			FROM package_scrape_job_logs
 		) combined
-		ORDER BY started_at DESC, id DESC
+		ORDER BY started_at DESC, id DESC, source ASC
 		LIMIT ? OFFSET ?`
 	rows, err := s.db.QueryContext(ctx, query, JobLogSourceDBSync, JobLogSourcePackageScrape, limit, offset)
 	if err != nil {
