@@ -26,5 +26,9 @@ export const ApiQueryKeys = {
   CLONE_SERIES: "clone-series",
   VERSION_BREAKDOWN: "version-breakdown",
   ASSET_BREAKDOWN: "asset-breakdown",
+  PACKAGE_REPOS: "package-repos",
+  PACKAGE_BREAKDOWN: "package-breakdown",
+  PACKAGE_SERIES: "package-series",
+  PACKAGE_VERSIONS: "package-versions",
   SYNC_LOGS: "sync-logs",
 } as const;

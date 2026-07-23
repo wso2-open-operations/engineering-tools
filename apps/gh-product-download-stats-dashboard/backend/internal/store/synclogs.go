@@ -23,14 +23,24 @@ import (
 	"time"
 )
 
-// ListSyncLogs returns sync job log rows, most recent first.
+// ListSyncLogs returns job log rows from both the Ballerina daily sync
+// (sync_job_logs) and the package stats scraper (package_scrape_job_logs —
+// gh-package-stats-scraper, written to this same database), merged into one
+// chronological history and distinguished by Source. Most recent first.
 func (s *Store) ListSyncLogs(ctx context.Context, limit, offset int) ([]SyncJobLog, error) {
 	const query = `
-		SELECT id, status, repos_synced, repos_failed, error_message, started_at, completed_at, created_at
-		FROM sync_job_logs
-		ORDER BY started_at DESC, id DESC
+		SELECT id, source, status, repos_synced, repos_failed, error_message, started_at, completed_at, created_at
+		FROM (
+			SELECT id, ? AS source, status, repos_synced, repos_failed, error_message, started_at, completed_at, created_at
+			FROM sync_job_logs
+			UNION ALL
+			SELECT id, ? AS source, status, repos_synced, repos_failed, error_message, started_at, completed_at, created_at
+			FROM package_scrape_job_logs
+		) combined
+
+		ORDER BY started_at DESC, id DESC, source ASC
 		LIMIT ? OFFSET ?`
-	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, JobLogSourceDBSync, JobLogSourcePackageScrape, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("store: list sync logs: %w", err)
 	}
@@ -45,7 +55,7 @@ func (s *Store) ListSyncLogs(ctx context.Context, limit, offset int) ([]SyncJobL
 			completedAt sql.NullTime
 			createdAt   time.Time
 		)
-		if err := rows.Scan(&log.ID, &log.Status, &log.ReposSynced, &log.ReposFailed,
+		if err := rows.Scan(&log.ID, &log.Source, &log.Status, &log.ReposSynced, &log.ReposFailed,
 			&errMsg, &startedAt, &completedAt, &createdAt); err != nil {
 			return nil, fmt.Errorf("store: scan sync log: %w", err)
 		}

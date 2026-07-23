@@ -100,6 +100,38 @@ type mockStore struct {
 	updateRepoFn    func(ctx context.Context, id int, upd store.RepositoryUpdate) error
 	deactivateFn    func(ctx context.Context, id int) error
 	listSyncLogFn   func(ctx context.Context, limit, offset int) ([]store.SyncJobLog, error)
+	pkgReposFn      func(ctx context.Context) ([]store.PackageRepoInfo, error)
+	pkgBreakdownFn  func(ctx context.Context, repoID int, from, to string) (*store.PackageBreakdown, error)
+	pkgSeriesFn     func(ctx context.Context, repoID int, from, to string, interval store.Interval) ([]store.PackageSeries, error)
+	pkgVersionsFn   func(ctx context.Context, repoID int, packageName, from, to string) (*store.PackageVersionBreakdown, error)
+}
+
+func (m *mockStore) PackageRepos(ctx context.Context) ([]store.PackageRepoInfo, error) {
+	if m.pkgReposFn != nil {
+		return m.pkgReposFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockStore) PackageBreakdown(ctx context.Context, repoID int, from, to string) (*store.PackageBreakdown, error) {
+	if m.pkgBreakdownFn != nil {
+		return m.pkgBreakdownFn(ctx, repoID, from, to)
+	}
+	return &store.PackageBreakdown{RepoID: repoID, Packages: []store.PackageBreakdownItem{}}, nil
+}
+
+func (m *mockStore) PackageSeriesForRepo(ctx context.Context, repoID int, from, to string, interval store.Interval) ([]store.PackageSeries, error) {
+	if m.pkgSeriesFn != nil {
+		return m.pkgSeriesFn(ctx, repoID, from, to, interval)
+	}
+	return nil, nil
+}
+
+func (m *mockStore) PackageVersionBreakdown(ctx context.Context, repoID int, packageName, from, to string) (*store.PackageVersionBreakdown, error) {
+	if m.pkgVersionsFn != nil {
+		return m.pkgVersionsFn(ctx, repoID, packageName, from, to)
+	}
+	return &store.PackageVersionBreakdown{RepoID: repoID, PackageName: packageName, Versions: []store.PackageVersionItem{}}, nil
 }
 
 func (m *mockStore) ListRepositoriesWithStats(ctx context.Context) ([]store.RepositoryWithStats, error) {

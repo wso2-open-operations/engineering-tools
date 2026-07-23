@@ -66,6 +66,9 @@ export default function RepositoryFormDialog({
     (repository?.assetPrefixes ?? []).join(", "),
   );
   const [isActive, setIsActive] = useState(repository?.isActive ?? true);
+  const [trackPackages, setTrackPackages] = useState(
+    repository?.trackPackages ?? false,
+  );
   const [submitting, setSubmitting] = useState(false);
 
   const isEdit = mode === "edit";
@@ -92,6 +95,7 @@ export default function RepositoryFormDialog({
               productName: productName.trim() || null,
               assetPrefixes: parsePrefixes(assetPrefixes),
               isActive,
+              trackPackages,
             },
           },
           { onSuccess, onError },
@@ -104,6 +108,7 @@ export default function RepositoryFormDialog({
             productName: productName.trim() || null,
             assetPrefixes: parsePrefixes(assetPrefixes),
             isActive,
+            trackPackages,
           },
           { onSuccess, onError },
         );
@@ -165,6 +170,16 @@ export default function RepositoryFormDialog({
               />
             }
             label="Active (synced daily)"
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={trackPackages}
+                onChange={(e) => setTrackPackages(e.target.checked)}
+                disabled={submitting}
+              />
+            }
+            label="Track packages (GitHub container packages, scraped nightly)"
           />
         </Box>
       </DialogContent>

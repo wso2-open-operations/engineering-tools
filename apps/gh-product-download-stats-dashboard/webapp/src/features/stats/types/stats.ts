@@ -37,6 +37,9 @@ export interface Repository {
   productName: string | null;
   assetPrefixes: string[];
   isActive: boolean;
+  // Whether gh-package-stats-scraper covers this repo (opt-in; most repos
+  // publish no GitHub packages).
+  trackPackages: boolean;
   createdAt: string;
   updatedAt: string;
   latestSnapshot: RepoSnapshot | null;
@@ -155,4 +158,53 @@ export interface AssetBreakdown {
   snapshotDate: string;
   version: string | null;
   assets: AssetBreakdownItem[];
+}
+
+export interface PackageRepoInfo {
+  repoId: number;
+  repoName: string;
+  productName: string | null;
+  packageCount: number;
+}
+
+export interface PackageReposResponse {
+  count: number;
+  repos: PackageRepoInfo[];
+}
+
+export interface PackageBreakdownItem {
+  packageName: string;
+  periodDownloads: number;
+  totalDownloads: number;
+  versionCount: number | null;
+}
+
+export interface PackageBreakdown {
+  repoId: number;
+  packages: PackageBreakdownItem[];
+}
+
+export interface PackageSeries {
+  packageName: string;
+  points: TimeSeriesPoint[];
+}
+
+export interface PackageSeriesResponse {
+  from: string;
+  to: string;
+  interval: string;
+  series: PackageSeries[];
+}
+
+export interface PackageVersionItem {
+  versionId: number;
+  tags: string | null;
+  periodDownloads: number;
+  totalDownloads: number;
+}
+
+export interface PackageVersionBreakdown {
+  repoId: number;
+  packageName: string;
+  versions: PackageVersionItem[];
 }

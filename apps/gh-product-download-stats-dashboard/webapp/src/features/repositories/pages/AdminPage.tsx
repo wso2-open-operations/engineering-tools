@@ -51,7 +51,7 @@ export default function AdminPage(): JSX.Element {
         <Box>
           <Typography variant="h4">Admin</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Manage tracked repositories and review sync job history.
+            Manage tracked repositories and review DB sync and scraper job history.
           </Typography>
         </Box>
         <Button

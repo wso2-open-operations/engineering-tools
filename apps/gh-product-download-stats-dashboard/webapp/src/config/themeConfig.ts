@@ -26,15 +26,22 @@ import type { OxygenThemeType as OxygenTheme } from "@wso2/oxygen-ui";
 // Every Oxygen UI theme the dashboard exposes, keyed by the value used in
 // window.config.GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_THEME and persisted as the runtime choice.
 // Single source of truth for both the build-time default and the theme picker.
-// "choreo" maps to WSO2Theme — oxygen-ui@0.12.0 renamed its export from
-// ChoreoTheme to WSO2Theme; the app's own "choreo" key/label is unchanged.
+// The "wso2" key maps to Oxygen's WSO2Theme (formerly ChoreoTheme) — the app's
+// key/label follow Oxygen's naming. See LEGACY_THEME_KEYS for the migration of
+// the old "choreo" key.
 export const THEMES = {
   acrylicOrange: AcrylicOrangeTheme,
   acrylicPurple: AcrylicPurpleTheme,
-  choreo: WSO2Theme,
+  wso2: WSO2Theme,
   classic: ClassicTheme,
   highContrast: HighContrastTheme,
 } satisfies Record<string, OxygenTheme>;
+
+// Renamed theme keys, so a persisted/configured old value still resolves.
+// "choreo" was this theme's key before it was renamed to match WSO2Theme.
+const LEGACY_THEME_KEYS: Record<string, ThemeKey> = {
+  choreo: "wso2",
+};
 
 export type ThemeKey = keyof typeof THEMES;
 
@@ -44,24 +51,36 @@ export const DEFAULT_THEME_KEY: ThemeKey = "acrylicOrange";
 export const THEME_OPTIONS: { key: ThemeKey; label: string }[] = [
   { key: "acrylicOrange", label: "Acrylic Orange" },
   { key: "acrylicPurple", label: "Acrylic Purple" },
-  { key: "choreo", label: "Choreo" },
+  { key: "wso2", label: "WSO2" },
   { key: "classic", label: "Classic" },
   { key: "highContrast", label: "High Contrast" },
 ];
 
-// True when value is a known theme key.
+// True when value is a known theme key. Uses Object.hasOwn (not `in`) so an
+// inherited Object.prototype name — "toString", "constructor", etc. — from a
+// tampered localStorage/window.config value can't be mistaken for a theme key.
 export function isThemeKey(value: unknown): value is ThemeKey {
-  return typeof value === "string" && value in THEMES;
+  return typeof value === "string" && Object.hasOwn(THEMES, value);
 }
 
-// Resolve a (possibly invalid) key to a concrete Oxygen theme.
+// Normalize a stored/configured key, mapping renamed legacy keys (e.g. the old
+// "choreo") to their current key. Returns undefined for unknown values.
+export function normalizeThemeKey(value: unknown): ThemeKey | undefined {
+  if (isThemeKey(value)) return value;
+  if (typeof value === "string" && Object.hasOwn(LEGACY_THEME_KEYS, value)) {
+    return LEGACY_THEME_KEYS[value];
+  }
+  return undefined;
+}
+
+// Resolve a (possibly invalid/legacy) key to a concrete Oxygen theme.
 export function resolveTheme(key: string | undefined): OxygenTheme {
-  return isThemeKey(key) ? THEMES[key] : THEMES[DEFAULT_THEME_KEY];
+  return THEMES[normalizeThemeKey(key) ?? DEFAULT_THEME_KEY];
 }
 
 // Build-time default theme key from window.config (the runtime picker layers a
 // persisted user choice on top of this).
 export function configThemeKey(): ThemeKey {
   const fromConfig = window.config?.GH_PRODUCT_DOWNLOAD_STATS_DASHBOARD_THEME;
-  return isThemeKey(fromConfig) ? fromConfig : DEFAULT_THEME_KEY;
+  return normalizeThemeKey(fromConfig) ?? DEFAULT_THEME_KEY;
 }

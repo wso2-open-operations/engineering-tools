@@ -44,7 +44,7 @@ func (s *Store) ListAllRepositoriesWithStats(ctx context.Context) ([]RepositoryW
 func (s *Store) repositoriesWithStats(ctx context.Context, activeOnly bool) ([]RepositoryWithStats, error) {
 	query := `
 		SELECT t.id, t.org_name, t.repo_name, t.product_name, t.asset_prefixes,
-		       t.is_active, t.created_at, t.updated_at,
+		       t.is_active, t.track_packages, t.created_at, t.updated_at,
 		       s.snapshot_date, s.total_download_count, s.forks_count, s.stargazers_count,
 		       s.watchers_count, s.open_issues_count, s.clone_count, s.clone_uniques
 		FROM tracked_repositories t
@@ -84,7 +84,7 @@ func (s *Store) repositoriesWithStats(ctx context.Context, activeOnly bool) ([]R
 		)
 		if err := rows.Scan(
 			&r.ID, &r.OrgName, &r.RepoName, &productName, &prefixes,
-			&r.IsActive, &createdAt, &updatedAt,
+			&r.IsActive, &r.TrackPackages, &createdAt, &updatedAt,
 			&snapDate, &totalDl, &forks, &stars, &watchers, &openIssues, &cloneCount, &cloneUniques,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan repository: %w", err)
@@ -125,11 +125,17 @@ func (s *Store) CreateRepository(ctx context.Context, in NewRepository) (int, er
 	if in.IsActive != nil {
 		isActive = *in.IsActive
 	}
+	// Defaults to false: most repos publish no GitHub packages, so scraping
+	// is opt-in (mirrors track_packages's DB default from migration 000002).
+	trackPackages := false
+	if in.TrackPackages != nil {
+		trackPackages = *in.TrackPackages
+	}
 
 	const query = `
-		INSERT INTO tracked_repositories (org_name, repo_name, product_name, asset_prefixes, is_active)
-		VALUES (?, ?, ?, ?, ?)`
-	res, err := s.db.ExecContext(ctx, query, in.OrgName, in.RepoName, in.ProductName, prefixes, isActive)
+		INSERT INTO tracked_repositories (org_name, repo_name, product_name, asset_prefixes, is_active, track_packages)
+		VALUES (?, ?, ?, ?, ?, ?)`
+	res, err := s.db.ExecContext(ctx, query, in.OrgName, in.RepoName, in.ProductName, prefixes, isActive, trackPackages)
 	if err != nil {
 		return 0, fmt.Errorf("store: create repository: %w", err)
 	}
@@ -162,6 +168,10 @@ func (s *Store) UpdateRepository(ctx context.Context, id int, upd RepositoryUpda
 	if upd.IsActive != nil {
 		setClauses = append(setClauses, "is_active = ?")
 		args = append(args, *upd.IsActive)
+	}
+	if upd.TrackPackages != nil {
+		setClauses = append(setClauses, "track_packages = ?")
+		args = append(args, *upd.TrackPackages)
 	}
 
 	if len(setClauses) == 0 {

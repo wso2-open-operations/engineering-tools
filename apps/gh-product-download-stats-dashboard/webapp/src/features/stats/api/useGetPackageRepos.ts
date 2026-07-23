@@ -14,21 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-export const APP_NAME = "GitHub Product Download Stats Dashboard";
+import { type UseQueryResult } from "@tanstack/react-query";
+import { useApiQuery } from "@hooks/useApiQuery";
+import { ApiQueryKeys } from "@constants/apiConstants";
+import { type PackageReposResponse } from "@features/stats/types/stats";
 
-// Default look-back window (days) applied when no date range is selected.
-export const DEFAULT_RANGE_DAYS = 30;
-
-// Application route paths.
-export const ROUTES = {
-  OVERVIEW: "/",
-  DOWNLOADS: "/downloads",
-  VERSIONS: "/versions",
-  PACKAGES: "/packages",
-  GITHUB_STATS: "/repository-stats",
-  ADMIN: "/admin",
-  ERROR_400: "/400",
-  ERROR_401: "/401",
-  ERROR_403: "/403",
-  ERROR_404: "/404",
-} as const;
+// GET /api/v1/stats/packages/repos — tracked repos that have GitHub package
+// data. Powers the Packages tab's product selector (repos without packages
+// never appear there).
+export function useGetPackageRepos(): UseQueryResult<PackageReposResponse, Error> {
+  return useApiQuery<PackageReposResponse>(
+    [ApiQueryKeys.PACKAGE_REPOS],
+    "/stats/packages/repos",
+  );
+}

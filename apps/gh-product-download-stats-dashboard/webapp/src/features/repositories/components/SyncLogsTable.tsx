@@ -52,10 +52,18 @@ const STATUS_COLOR: Record<
 
 const STATUS_OPTIONS = ["SUCCESS", "PARTIAL_FAILURE", "FAILED", "STARTED"];
 
+const SOURCE_LABEL: Record<string, string> = {
+  DB_SYNC: "DB Sync",
+  PACKAGE_SCRAPE: "Scraper Sync",
+};
+
+const SOURCE_OPTIONS = ["DB_SYNC", "PACKAGE_SCRAPE"];
+
 export default function SyncLogsTable(): JSX.Element {
   const { data, isLoading, isError } = useGetSyncLogs(100);
   const logs = data?.logs ?? [];
 
+  const [sourceFilter, setSourceFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [startedFilter, setStartedFilter] = useState("");
   const [completedFilter, setCompletedFilter] = useState("");
@@ -64,6 +72,7 @@ export default function SyncLogsTable(): JSX.Element {
   const completedInputRef = useRef<HTMLInputElement>(null);
 
   const filtered = logs.filter((log) => {
+    if (sourceFilter && log.source !== sourceFilter) return false;
     if (statusFilter && log.status !== statusFilter) return false;
     if (startedFilter && !log.startedAt?.startsWith(startedFilter))
       return false;
@@ -77,7 +86,7 @@ export default function SyncLogsTable(): JSX.Element {
   return (
     <Card sx={{ p: 2 }}>
       <Typography variant="h6" component="h3" sx={{ mb: 2 }}>
-        Sync history
+        Sync &amp; scrape history
       </Typography>
 
       {isLoading ? (
@@ -89,12 +98,41 @@ export default function SyncLogsTable(): JSX.Element {
       ) : isError ? (
         <ErrorState minHeight={140} />
       ) : logs.length === 0 ? (
-        <EmptyState title="No sync runs recorded yet" minHeight={140} />
+        <EmptyState
+          title="No sync or scrape runs recorded yet"
+          minHeight={140}
+        />
       ) : (
         <>
           <Table size="small">
             <TableHead>
               <TableRow>
+                {/* Source filter — inline select */}
+                <TableCell>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                    Source
+                    <Select
+                      size="small"
+                      displayEmpty
+                      value={sourceFilter}
+                      onChange={(e) => setSourceFilter(e.target.value)}
+                      sx={{
+                        fontSize: "0.75rem",
+                        height: 24,
+                        ml: 0.5,
+                        "& .MuiSelect-select": { py: "2px", px: "8px" },
+                      }}
+                    >
+                      <MenuItem value="">All</MenuItem>
+                      {SOURCE_OPTIONS.map((s) => (
+                        <MenuItem key={s} value={s} sx={{ fontSize: "0.8rem" }}>
+                          {SOURCE_LABEL[s]}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </Box>
+                </TableCell>
+
                 {/* Status filter — inline select */}
                 <TableCell>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -209,7 +247,9 @@ export default function SyncLogsTable(): JSX.Element {
                               ? "Change completed date filter"
                               : "Filter by completed date"
                           }
-                          onClick={() => completedInputRef.current?.showPicker()}
+                          onClick={() =>
+                            completedInputRef.current?.showPicker()
+                          }
                         >
                           <CalendarDays size={14} />
                         </IconButton>
@@ -235,7 +275,7 @@ export default function SyncLogsTable(): JSX.Element {
               {filtered.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     align="center"
                     sx={{ py: 3, color: "text.secondary" }}
                   >
@@ -244,7 +284,10 @@ export default function SyncLogsTable(): JSX.Element {
                 </TableRow>
               ) : (
                 pagination.paged.map((log) => (
-                  <TableRow key={log.id}>
+                  <TableRow key={`${log.source}-${log.id}`}>
+                    <TableCell>
+                      {SOURCE_LABEL[log.source] ?? log.source}
+                    </TableCell>
                     <TableCell>
                       <Chip
                         size="small"

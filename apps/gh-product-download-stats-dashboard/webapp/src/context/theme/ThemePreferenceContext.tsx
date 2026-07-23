@@ -28,7 +28,7 @@ import {
 } from "react";
 import {
   configThemeKey,
-  isThemeKey,
+  normalizeThemeKey,
   resolveTheme,
   THEME_OPTIONS,
   type ThemeKey,
@@ -46,10 +46,12 @@ const ThemePreferenceContext =
   createContext<ThemePreferenceContextValue | null>(null);
 
 // Initial theme key: a saved user choice wins, else the window.config default.
+// normalizeThemeKey migrates renamed legacy keys (e.g. an old "choreo" choice
+// persisted before the theme was renamed to "wso2").
 function readInitial(): ThemeKey {
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (isThemeKey(saved)) return saved;
+    const saved = normalizeThemeKey(window.localStorage.getItem(STORAGE_KEY));
+    if (saved) return saved;
   } catch {
     /* localStorage may be unavailable — fall back to the config default */
   }

@@ -118,6 +118,52 @@ func TestCreateRepository_Success(t *testing.T) {
 	}
 }
 
+func TestCreateRepository_TrackPackagesPassthrough(t *testing.T) {
+	var got store.NewRepository
+	mock := &mockStore{
+		createRepoFn: func(_ context.Context, in store.NewRepository) (int, error) {
+			got = in
+			return 1, nil
+		},
+	}
+	h := NewAdminHandler(mock, adminGroups())
+	w := httptest.NewRecorder()
+	body := `{"orgName":"openchoreo","repoName":"openchoreo","trackPackages":true}`
+	r := withUser(httptest.NewRequest(http.MethodPost, "/api/v1/admin/repositories", strings.NewReader(body)), testAdmin)
+
+	h.CreateRepository(w, r)
+
+	assertStatus(t, w, http.StatusCreated)
+	if got.TrackPackages == nil || !*got.TrackPackages {
+		t.Errorf("trackPackages = %v, want a pointer to true", got.TrackPackages)
+	}
+}
+
+func TestUpdateRepository_TrackPackagesPassthrough(t *testing.T) {
+	var got store.RepositoryUpdate
+	mock := &mockStore{
+		updateRepoFn: func(_ context.Context, _ int, upd store.RepositoryUpdate) error {
+			got = upd
+			return nil
+		},
+	}
+	h := NewAdminHandler(mock, adminGroups())
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodPatch, "/api/v1/admin/repositories/9", strings.NewReader(`{"trackPackages":false}`)), testAdmin)
+	r.SetPathValue("id", "9")
+
+	h.UpdateRepository(w, r)
+
+	assertStatus(t, w, http.StatusNoContent)
+	if got.TrackPackages == nil || *got.TrackPackages {
+		t.Errorf("trackPackages = %v, want a pointer to false", got.TrackPackages)
+	}
+	// Fields omitted from the JSON body must stay nil (partial-update semantics).
+	if got.IsActive != nil {
+		t.Errorf("isActive = %v, want nil (not present in the request body)", got.IsActive)
+	}
+}
+
 func TestUpdateRepository_NotFound(t *testing.T) {
 	mock := &mockStore{
 		updateRepoFn: func(_ context.Context, _ int, _ store.RepositoryUpdate) error {
@@ -181,5 +227,35 @@ func TestListSyncLogs_Success(t *testing.T) {
 	got := decodeJSON[syncLogsResponse](t, w)
 	if got.Count != 1 || len(got.Logs) != 1 {
 		t.Fatalf("count = %d, logs = %d; want 1/1", got.Count, len(got.Logs))
+	}
+}
+
+// TestListSyncLogs_MergesSources pins that both job sources (the Ballerina
+// daily sync and the package stats scraper) pass through to the response
+// untouched — including that their id spaces overlap (each is only unique
+// within its own source).
+func TestListSyncLogs_MergesSources(t *testing.T) {
+	mock := &mockStore{
+		listSyncLogFn: func(_ context.Context, _, _ int) ([]store.SyncJobLog, error) {
+			return []store.SyncJobLog{
+				{ID: 9, Source: store.JobLogSourcePackageScrape, Status: "SUCCESS"},
+				{ID: 9, Source: store.JobLogSourceDBSync, Status: "PARTIAL_FAILURE"},
+			}, nil
+		},
+	}
+	h := NewAdminHandler(mock, adminGroups())
+	w := httptest.NewRecorder()
+	r := withUser(httptest.NewRequest(http.MethodGet, "/api/v1/admin/sync/logs", nil), testAdmin)
+
+	h.ListSyncLogs(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	got := decodeJSON[syncLogsResponse](t, w)
+	if len(got.Logs) != 2 {
+		t.Fatalf("logs = %d; want 2", len(got.Logs))
+	}
+	if got.Logs[0].Source != store.JobLogSourcePackageScrape || got.Logs[1].Source != store.JobLogSourceDBSync {
+		t.Fatalf("sources = [%s, %s]; want [%s, %s]",
+			got.Logs[0].Source, got.Logs[1].Source, store.JobLogSourcePackageScrape, store.JobLogSourceDBSync)
 	}
 }

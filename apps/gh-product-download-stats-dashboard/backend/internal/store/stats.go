@@ -24,7 +24,16 @@ import (
 )
 
 // Summary computes the dashboard KPI figures.
+// Summary is served from statsCache: it fans out to several aggregate queries
+// (including the per-asset download delta), and the underlying data changes
+// only once a day. Repository mutations purge the cache (see cache.go).
 func (s *Store) Summary(ctx context.Context) (*Summary, error) {
+	return cachedDo(s.statsCache, "summary", func() (*Summary, error) {
+		return s.summary(ctx)
+	})
+}
+
+func (s *Store) summary(ctx context.Context) (*Summary, error) {
 	var sum Summary
 
 	if err := s.db.QueryRowContext(ctx,
@@ -61,31 +70,45 @@ func (s *Store) Summary(ctx context.Context) (*Summary, error) {
 		return nil, fmt.Errorf("store: summary clones: %w", err)
 	}
 
-	// Today's / previous-day / this-month download counts, derived from per-repo
-	// daily deltas (first snapshot per repo is NULL → omitted, per the first-day rule).
-	// snapshot_date is stamped with the sync's run date, not the date the delta's
-	// activity happened — GitHub only reports a cumulative total, so the delta at
-	// the latest snapshot_date reflects the PREVIOUS day's completed activity.
-	// asOfDate is therefore MAX(snapshot_date) - 1 day, so it names the day
-	// TodayDownloads actually represents, not the day the sync happened to run.
-	// MonthDownloads is likewise attributed by activity_date (snapshot_date - 1),
-	// so a delta whose snapshot_date falls on the 1st (but whose activity
-	// actually happened on the last day of the PREVIOUS month) isn't miscounted
-	// into the wrong month.
+	// Today's / previous-day / this-month download counts. These MUST use the
+	// same per-ASSET consecutive-day delta as DailySeries (the Downloads page),
+	// or the KPI cards disagree with it: the old repo-level total_download_count
+	// LAG diff counts newly-discovered / reappearing assets as same-day
+	// downloads, inflating the figures (e.g. 12,875 vs the real 249).
+	//
+	// The self-join is pre-aggregated to one row per activity_date inside the
+	// CTE, so the expensive scan runs once and the today/prev/month picks
+	// operate on a handful of rows. The scan is bounded to snapshots from the
+	// start of the latest snapshot's month onward (enough for the current
+	// calendar month plus the two most recent activity days), anchored on the
+	// data itself so a stale sync still resolves today/prev correctly.
+	//
+	// Dates are labeled by activity_date = snapshot_date - 1 (GitHub reports a
+	// cumulative total, so the latest snapshot's delta is the PREVIOUS day's
+	// completed activity); asOfDate is MAX(activity_date), and MonthDownloads
+	// is attributed by activity_date so a snapshot on the 1st (activity on the
+	// prior month's last day) isn't miscounted into this month.
 	const downloadsQuery = `
-		WITH deltas AS (
-			SELECT s.snapshot_date,
-			       DATE_SUB(s.snapshot_date, INTERVAL 1 DAY) AS activity_date,
-			       s.total_download_count - LAG(s.total_download_count)
-			           OVER (PARTITION BY s.tracked_repo_id ORDER BY s.snapshot_date) AS d
-			FROM repository_daily_snapshots s
-			JOIN tracked_repositories t ON t.id = s.tracked_repo_id AND t.is_active = 1
+		WITH daily AS (
+			SELECT DATE_SUB(cur.snapshot_date, INTERVAL 1 DAY) AS activity_date,
+			       SUM(GREATEST(cur.download_count - prev.download_count, 0)) AS total
+			FROM release_asset_daily_snapshots cur
+			JOIN release_asset_daily_snapshots prev
+			  ON prev.tracked_repo_id = cur.tracked_repo_id
+			 AND prev.asset_github_id = cur.asset_github_id
+			 AND prev.snapshot_date = DATE_SUB(cur.snapshot_date, INTERVAL 1 DAY)
+			JOIN tracked_repositories t ON t.id = cur.tracked_repo_id AND t.is_active = 1
+			WHERE cur.snapshot_date >= (
+				SELECT DATE_SUB(DATE_FORMAT(MAX(snapshot_date), '%Y-%m-01'), INTERVAL 1 DAY)
+				FROM release_asset_daily_snapshots
+			)
+			GROUP BY DATE_SUB(cur.snapshot_date, INTERVAL 1 DAY)
 		)
 		SELECT
-		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM deltas)), 0),
-		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE snapshot_date = (SELECT MAX(snapshot_date) FROM deltas WHERE snapshot_date < (SELECT MAX(snapshot_date) FROM deltas))), 0),
-		  COALESCE((SELECT SUM(GREATEST(d, 0)) FROM deltas WHERE DATE_FORMAT(activity_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')), 0),
-		  DATE_SUB((SELECT MAX(snapshot_date) FROM deltas), INTERVAL 1 DAY)`
+		  COALESCE((SELECT total FROM daily WHERE activity_date = (SELECT MAX(activity_date) FROM daily)), 0),
+		  COALESCE((SELECT total FROM daily WHERE activity_date = (SELECT MAX(activity_date) FROM daily WHERE activity_date < (SELECT MAX(activity_date) FROM daily))), 0),
+		  COALESCE((SELECT SUM(total) FROM daily WHERE DATE_FORMAT(activity_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')), 0),
+		  (SELECT MAX(activity_date) FROM daily)`
 	var prevDownloads int64
 	var asOfDate sql.NullTime
 	if err := s.db.QueryRowContext(ctx, downloadsQuery).

@@ -27,16 +27,24 @@ export interface NewRepository {
   productName?: string | null;
   assetPrefixes?: string[];
   isActive?: boolean;
+  trackPackages?: boolean;
 }
 
 export interface RepositoryUpdate {
   productName?: string | null;
   assetPrefixes?: string[];
   isActive?: boolean;
+  trackPackages?: boolean;
 }
+
+// A job's source: the Ballerina daily sync, or the package stats scraper.
+// id is only unique within a source, never across the two — pair them
+// together (e.g. `${source}-${id}`) for a stable list key.
+export type JobLogSource = "DB_SYNC" | "PACKAGE_SCRAPE";
 
 export interface SyncJobLog {
   id: number;
+  source: JobLogSource;
   status: string;
   reposSynced: number;
   reposFailed: number;

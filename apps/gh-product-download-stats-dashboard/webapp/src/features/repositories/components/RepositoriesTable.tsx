@@ -56,9 +56,12 @@ interface RepositoriesTableProps {
   onEdit: (repository: Repository) => void;
 }
 
+type ToggleKind = "isActive" | "trackPackages";
+
 interface ConfirmState {
   repo: Repository;
-  nextActive: boolean;
+  kind: ToggleKind;
+  nextValue: boolean;
 }
 
 export default function RepositoriesTable({
@@ -79,7 +82,11 @@ export default function RepositoriesTable({
   const pagination = usePagination(repositories ?? []);
 
   const handleToggle = (repo: Repository) => {
-    setConfirm({ repo, nextActive: !repo.isActive });
+    setConfirm({ repo, kind: "isActive", nextValue: !repo.isActive });
+  };
+
+  const handleToggleTrackPackages = (repo: Repository) => {
+    setConfirm({ repo, kind: "trackPackages", nextValue: !repo.trackPackages });
   };
 
   const handleConfirm = () => {
@@ -95,7 +102,12 @@ export default function RepositoriesTable({
         setConfirming(false);
       };
       const onError = () => setConfirming(false);
-      if (snapshot.nextActive) {
+      if (snapshot.kind === "trackPackages") {
+        update.mutate(
+          { id: snapshot.repo.id, update: { trackPackages: snapshot.nextValue } },
+          { onSuccess, onError },
+        );
+      } else if (snapshot.nextValue) {
         update.mutate({ id: snapshot.repo.id, update: { isActive: true } }, { onSuccess, onError });
       } else {
         deactivate.mutate(snapshot.repo.id, { onSuccess, onError });
@@ -150,6 +162,7 @@ export default function RepositoriesTable({
               <TableCell>Organization</TableCell>
               <TableCell>Prefixes</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell>Packages</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -174,6 +187,28 @@ export default function RepositoriesTable({
                     color={repo.isActive ? "success" : "default"}
                   />
                 </TableCell>
+                <TableCell>
+                  <Tooltip
+                    title={
+                      repo.trackPackages
+                        ? "Stop scraping GitHub package downloads for this repo"
+                        : "Start scraping GitHub package downloads for this repo"
+                    }
+                  >
+                    <Switch
+                      size="small"
+                      checked={repo.trackPackages}
+                      disabled={pendingId === repo.id}
+                      onChange={() => handleToggleTrackPackages(repo)}
+                      color="success"
+                      inputProps={{
+                        "aria-label": repo.trackPackages
+                          ? "Stop tracking packages"
+                          : "Start tracking packages",
+                      }}
+                    />
+                  </Tooltip>
+                </TableCell>
                 <TableCell align="right">
                   <Box
                     sx={{
@@ -183,11 +218,6 @@ export default function RepositoriesTable({
                       alignItems: "center",
                     }}
                   >
-                    <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => onEdit(repo)}>
-                        <Pencil size={16} />
-                      </IconButton>
-                    </Tooltip>
                     <Tooltip title={repo.isActive ? "Deactivate" : "Activate"}>
                       <Switch
                         size="small"
@@ -201,6 +231,11 @@ export default function RepositoriesTable({
                             : "Activate repository",
                         }}
                       />
+                    </Tooltip>
+                    <Tooltip title="Edit">
+                      <IconButton size="small" onClick={() => onEdit(repo)}>
+                        <Pencil size={16} />
+                      </IconButton>
                     </Tooltip>
                   </Box>
                 </TableCell>
@@ -228,21 +263,33 @@ export default function RepositoriesTable({
         fullWidth
       >
         <DialogTitle>
-          {confirm?.nextActive ? "Activate repository?" : "Deactivate repository?"}
+          {confirm?.kind === "trackPackages"
+            ? confirm.nextValue
+              ? "Enable package tracking?"
+              : "Disable package tracking?"
+            : confirm?.nextValue
+              ? "Activate repository?"
+              : "Deactivate repository?"}
         </DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {toggleError && (
               <Alert severity="error">
-                {confirm?.nextActive
-                  ? "Failed to activate the repository."
-                  : "Failed to deactivate the repository."}
+                {confirm?.kind === "trackPackages"
+                  ? "Failed to update package tracking."
+                  : confirm?.nextValue
+                    ? "Failed to activate the repository."
+                    : "Failed to deactivate the repository."}
               </Alert>
             )}
             <Typography color="text.secondary">
-              {confirm?.nextActive
-                ? `Activate "${confirmRepoLabel}"? It will start appearing in charts, stats, and tables.`
-                : `Deactivate "${confirmRepoLabel}"? It will be hidden from all charts, stats, and tables.`}
+              {confirm?.kind === "trackPackages"
+                ? confirm.nextValue
+                  ? `Start tracking packages for "${confirmRepoLabel}"? web scraper will begin covering it on the next cron-job.`
+                  : `Stop tracking packages for "${confirmRepoLabel}"? web scraper will no longer cover it from the next cron-job onward.`
+                : confirm?.nextValue
+                  ? `Activate "${confirmRepoLabel}"? It will start appearing in charts, stats, and tables.`
+                  : `Deactivate "${confirmRepoLabel}"? It will be hidden from all charts, stats, and tables.`}
             </Typography>
           </Box>
         </DialogContent>
@@ -256,12 +303,18 @@ export default function RepositoriesTable({
           </Button>
           <Button
             variant="contained"
-            color={confirm?.nextActive ? "success" : "error"}
+            color={confirm?.nextValue ? "success" : "error"}
             onClick={handleConfirm}
             disabled={confirming}
             startIcon={confirming ? <CircularProgress size={14} color="inherit" /> : undefined}
           >
-            {confirm?.nextActive ? "Activate" : "Deactivate"}
+            {confirm?.kind === "trackPackages"
+              ? confirm.nextValue
+                ? "Enable"
+                : "Disable"
+              : confirm?.nextValue
+                ? "Activate"
+                : "Deactivate"}
           </Button>
         </DialogActions>
       </Dialog>
