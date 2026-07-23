@@ -282,8 +282,9 @@ export default function VersionsPage(): JSX.Element {
           }}
         >
           <FormControl size="small" sx={{ flex: 1, minWidth: 200 }}>
-            <InputLabel>Product</InputLabel>
+            <InputLabel shrink>Product</InputLabel>
             <Select
+              notched
               value={repoId ?? ""}
               label="Product"
               onChange={(e) => {
