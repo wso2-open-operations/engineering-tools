@@ -35,9 +35,11 @@ export interface RoutedIntent {
 }
 
 const choreoJwksUri = process.env.CHOREO_JWKS_URI || "https://sts.choreo.dev/oauth2/jwks";
+const asgardeoJwksUri = process.env.ASGARDEO_JWKS_URI || "https://api.asgardeo.io/t/wso2/oauth2/jwks";
+const jwksUri = process.env.AUTH_ISSUER === "asgardeo" ? asgardeoJwksUri : choreoJwksUri;
 
 const clientJwks = jwksClient({
-    jwksUri: choreoJwksUri,
+    jwksUri,
     cache: true,
     cacheMaxEntries: 5,
     cacheMaxAge: 600000
@@ -55,15 +57,13 @@ function getKey(header: jwt.JwtHeader, callback: jwt.SigningKeyCallback) {
 
 async function extractClaimsFromJwt(jwtAssertion: string): Promise<{ githubId: string; email: string } | null> {
     return new Promise((resolve) => {
-
         jwt.verify(jwtAssertion, getKey, { algorithms: ["RS256"] }, (err, decoded: any) => {
             if (err || !decoded) {
-                console.error("JWT cryptographical verification constraint violation:", err?.message);
+                console.error("JWT signature verification failed:", err?.message);
                 return resolve(null);
             }
-
             if (!decoded.exp) {
-                console.error("JWT configuration context error: Token missing explicit expiration 'exp' parameters.");
+                console.error("Token is missing an expiration ('exp') claim, rejecting.");
                 return resolve(null);
             }
 
@@ -71,7 +71,7 @@ async function extractClaimsFromJwt(jwtAssertion: string): Promise<{ githubId: s
             const email = decoded.email;
 
             if (!githubId || !email) {
-                console.error("JWT claims payload is missing required github_id or email fields.");
+                console.error("Token is missing required claims (github_id/sub or email).");
                 return resolve(null);
             }
 
@@ -147,7 +147,7 @@ async function getProjectIdAndTitleByName(
 
         return matched ? { number: matched.number, title: matched.title } : null;
     } catch (err) {
-        console.error("Failed to parse project list:", err);
+        console.error("Failed to fetch or parse the project list from GitHub:", err);
         return null;
     }
 }
@@ -159,6 +159,10 @@ function formatIterationLabel(iteration: string): string {
     return `iteration frame (${iteration})`;
 }
 
+function toReleaseTitles(releases: any[]): string[] {
+    return releases.map((r: any) => r.content?.title ?? "Untitled Issue");
+}
+
 async function main() {
     if (!process.env.ANTHROPIC_API_KEY) {
         throw new Error("Initialization Failed: Missing ANTHROPIC_API_KEY environment variable");
@@ -168,11 +172,7 @@ async function main() {
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const client = await connectMCP();
-    const app = WebExpress();
-
-    function WebExpress() {
-        return express();
-    }
+    const app = express();
 
     app.use(express.json({ limit: "10kb" }));
 
@@ -187,57 +187,65 @@ async function main() {
 
             const jwtAssertion = req.headers["x-jwt-assertion"];
             if (!jwtAssertion || typeof jwtAssertion !== "string") {
-                return res.status(401).json({ error: "Missing identity assertion context token." });
+                console.warn("Request rejected, no x-jwt-assertion header present.");
+                return res.status(401).json({
+                    error: "You're not signed in, or your session has expired. Please sign in again."
+                });
             }
 
             const claims = await extractClaimsFromJwt(jwtAssertion);
             if (!claims || !/^[a-zA-Z0-9_\-]+$/.test(claims.githubId)) {
-                return res.status(401).json({ error: "Invalid identity verification parameters." });
+                console.warn("Request rejected, token failed verification or claims look invalid.");
+                return res.status(401).json({
+                    error: "We couldn't verify your identity. Please sign in again."
+                });
             }
 
             const { githubId, email } = claims;
 
             if (typeof question !== "string" || !question.trim()) {
-                return res.status(400).json({ error: "Missing or invalid question" });
+                return res.status(400).json({
+                    error: "Please include a question, like \"What are the releases for this week?\""
+                });
             }
 
             const [userRows]: any = await dbPool.execute(
-                "SELECT github_id, email FROM users WHERE github_id = ?",
+                "SELECT github_id, email FROM ghs_users WHERE github_id = ?",
                 [githubId]
             );
 
             if (userRows.length > 0) {
                 if (userRows[0].email !== email) {
-                    await dbPool.execute("UPDATE users SET email = ? WHERE github_id = ?", [email, githubId]);
+                    await dbPool.execute("UPDATE ghs_users SET email = ? WHERE github_id = ?", [email, githubId]);
                 }
             } else {
                 try {
                     await dbPool.execute(
-                        "INSERT INTO users (github_id, email) VALUES (?, ?)",
+                        "INSERT INTO ghs_users (github_id, email) VALUES (?, ?)",
                         [githubId, email]
                     );
+
                 } catch (err: any) {
                     if (err.code === 'ER_DUP_ENTRY') {
                         const [emailCheck]: any = await dbPool.execute(
-                            "SELECT github_id FROM users WHERE email = ?",
+                            "SELECT github_id FROM ghs_users WHERE email = ?",
                             [email]
                         );
 
                         if (emailCheck.length > 0 && emailCheck[0].github_id !== githubId) {
-                            console.error("Unique Email collision encountered for a separate GitHub identity profile context.");
-                            return res.status(409).json({ error: "Account mapping mismatch context configuration error." });
+                            return res.status(409).json({
+                                error: "This email is already linked to a different account. Please contact support."
+                            });
                         }
-
-                        console.warn("Bypassed concurrent execution race condition for matching user profile.");
                     } else {
                         throw err;
                     }
                 }
             }
 
-            const [sessionRows]: any = await dbPool.execute("SELECT * FROM user_session_state WHERE github_id = ?", [githubId]);
+            const [sessionRows]: any = await dbPool.execute("SELECT * FROM ghs_user_session_state WHERE github_id = ?", [githubId]);
             const [prefRows]: any = await dbPool.execute(
-                "SELECT project_id, board_name FROM user_project_preferences WHERE github_id = ? AND is_remembered = 1",
+                "SELECT project_id, board_name FROM ghs_user_project_preferences WHERE github_id = ? AND is_remembered = 1",
                 [githubId]
             );
 
@@ -253,26 +261,27 @@ async function main() {
                 );
 
                 if (!projectDetails) {
-                    await dbPool.execute("DELETE FROM user_session_state WHERE github_id = ?", [githubId]);
+                    await dbPool.execute("DELETE FROM ghs_user_session_state WHERE github_id = ?", [githubId]);
                     return res.json({
-                        message: `Hmm, I couldn't find "${session.pending_board_name}" on GitHub anymore. Let's try starting fresh.`
+                        type: "error",
+                        message: `I couldn't find "${session.pending_board_name}" on GitHub anymore. Let's start fresh, which board would you like to check?`
                     });
                 }
 
                 if (isYes) {
                     const [existing]: any = await dbPool.execute(
-                        "SELECT 1 FROM user_project_preferences WHERE github_id = ? AND project_id = ?",
+                        "SELECT 1 FROM ghs_user_project_preferences WHERE github_id = ? AND project_id = ?",
                         [githubId, projectDetails.number]
                     );
 
                     if (existing.length === 0) {
                         await dbPool.execute(
-                            "INSERT INTO user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1)",
+                            "INSERT INTO ghs_user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1)",
                             [githubId, projectDetails.number, ownerGroup, projectDetails.title]
                         );
                     } else {
                         await dbPool.execute(
-                            "UPDATE user_project_preferences SET is_remembered = 1 WHERE github_id = ? AND project_id = ?",
+                            "UPDATE ghs_user_project_preferences SET is_remembered = 1 WHERE github_id = ? AND project_id = ?",
                             [githubId, projectDetails.number]
                         );
                     }
@@ -281,10 +290,7 @@ async function main() {
                 const intentArgs: RoutedIntent = {
                     status: "READY",
                     extractedBoardName: projectDetails.title,
-                    args: {
-                        iteration: targetIteration,
-                        function: session.pending_function
-                    },
+                    args: { iteration: targetIteration, function: session.pending_function },
                     conversationalResponse: null
                 };
 
@@ -292,16 +298,18 @@ async function main() {
                     runTool(client, intentArgs, { owner: ownerGroup, projectNumber: projectDetails.number }, signal)
                 );
 
-                const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
+                await dbPool.execute("DELETE FROM ghs_user_session_state WHERE github_id = ?", [githubId]);
 
-                const saveMessage = isYes
-                    ? `Awesome! I've saved "${projectDetails.title}" to your permanent tracking preferences.`
-                    : `Got it, I won't save this board layout to your shortcuts.`;
-
-                const responseMsg = `${saveMessage}\n\nHere are the planned releases from "${projectDetails.title}" for the ${formatIterationLabel(targetIteration)}:\n${releaseList || "• No active releases found."}`;
-
-                await dbPool.execute("DELETE FROM user_session_state WHERE github_id = ?", [githubId]);
-                return res.json({ message: responseMsg });
+                return res.json({
+                    type: "release_list",
+                    saved: isYes,
+                    message: isYes
+                        ? `Saved "${projectDetails.title}" to your boards. Here's what's planned for the ${formatIterationLabel(targetIteration)}:`
+                        : `No problem, I won't save it. Here's what's planned for the ${formatIterationLabel(targetIteration)}:`,
+                    boardName: projectDetails.title,
+                    iteration: targetIteration,
+                    releases: toReleaseTitles(releases)
+                });
             }
 
             if (session && session.current_state === 'AWAITING_BOARD_SELECTION') {
@@ -313,17 +321,20 @@ async function main() {
 
                 if (!projectDetails) {
                     return res.json({
-                        message: `I couldn't find a board named "${chosenBoard}". Please pick or type one of the exact names listed above.`
+                        type: "board_selection",
+                        message: `I couldn't find a board named "${chosenBoard}". Please type one of the board names from the list above.`
                     });
                 }
 
                 await dbPool.execute(
-                    "UPDATE user_session_state SET current_state = 'AWAITING_REMEMBER_CONFIRMATION', pending_board_name = ? WHERE github_id = ?",
+                    "UPDATE ghs_user_session_state SET current_state = 'AWAITING_REMEMBER_CONFIRMATION', pending_board_name = ? WHERE github_id = ?",
                     [projectDetails.title, githubId]
                 );
 
                 return res.json({
-                    message: `Got it, pulling up "${projectDetails.title}". Would you like me to add this board to your saved preferences list so you can track it easily later?`
+                    type: "confirmation",
+                    message: `Got it, I'll use "${projectDetails.title}". Want me to remember this board for next time?`,
+                    boardName: projectDetails.title
                 });
             }
 
@@ -331,7 +342,7 @@ async function main() {
             const rawIntent = await routeIntent(anthropic, question, primaryContextName);
 
             if (!rawIntent || typeof rawIntent !== "object") {
-                throw new Error("Invalid shape: routeIntent did not return a valid object structure");
+                throw new Error("routeIntent did not return a valid object, check the LLM response shape.");
             }
 
             const intent = rawIntent as RoutedIntent;
@@ -359,26 +370,20 @@ async function main() {
                 const githubBoardsList = projects.map((p: any) => p.title) ?? [];
 
                 await dbPool.execute(
-                    "INSERT INTO user_session_state (github_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
+                    "INSERT INTO ghs_user_session_state (github_id, current_state, pending_iteration, pending_function) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?",
                     [githubId, resolvedIteration, intent.args?.function ?? null, resolvedIteration, intent.args?.function ?? null]
                 );
 
-                let introductoryText = "Let's choose a project workspace. ";
-                if (savedPreferences.length > 0) {
-                    const savedNames = savedPreferences.map(p => `"${p.board_name}"`).join(", ");
-                    introductoryText = `You currently have quick access shortcuts saved for: ${savedNames}. `;
-                }
+                const message = savedPreferences.length > 0
+                    ? "You already have some boards saved. Which one would you like to check, or pick a new one below?"
+                    : "Which GitHub project board would you like me to check?";
 
-                if (githubBoardsList.length > 0) {
-                    const boardOptions = githubBoardsList.map((b: string) => `• ${b}`).join("\n");
-                    return res.json({
-                        message: `${introductoryText}Here are the project boards available on your GitHub workspace:\n\n${boardOptions}\n\nWhich one would you like to view?`
-                    });
-                } else {
-                    return res.json({
-                        message: "Which GitHub project board should I take a look at?"
-                    });
-                }
+                return res.json({
+                    type: "board_selection",
+                    message,
+                    savedBoards: savedPreferences.map(p => p.board_name),
+                    availableBoards: githubBoardsList
+                });
             }
 
             if (intent.extractedBoardName) {
@@ -386,44 +391,42 @@ async function main() {
                     const releases = await withTimeout(30000, (signal) =>
                         runTool(client, intent, { owner: ownerGroup, projectNumber: matchedPreference.project_id }, signal)
                     );
-                    const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
 
                     return res.json({
-                        message: `Here are the planned releases for "${matchedPreference.board_name}" during the ${formatIterationLabel(resolvedIteration)}:\n\n${releaseList || "• No active releases found."}`
-                    });
-                } else {
-                    const projectDetails = await withTimeout(30000, (signal) =>
-                        getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName!, signal)
-                    );
-
-                    if (!projectDetails) {
-                        return res.json({
-                            message: `I noticed you wanted to open "${intent.extractedBoardName}", but I couldn't verify that exact board name on your GitHub workspace. Which project board should I check?`
-                        });
-                    }
-
-                    const pendingFunc = intent.args?.function ?? null;
-                    await dbPool.execute(
-                        `INSERT INTO user_session_state 
-                        (github_id, current_state, pending_iteration, pending_function, pending_board_name) 
-                        VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?) 
-                        ON DUPLICATE KEY UPDATE 
-                        current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?`,
-                        [
-                            githubId,
-                            resolvedIteration,
-                            pendingFunc,
-                            projectDetails.title,
-                            resolvedIteration,
-                            pendingFunc,
-                            projectDetails.title
-                        ]
-                    );
-
-                    return res.json({
-                        message: `Got it, I found "${projectDetails.title}". Would you like me to add this board to your saved preferences list so you can track it easily later?`
+                        type: "release_list",
+                        message: `Here's what's planned for "${matchedPreference.board_name}" during the ${formatIterationLabel(resolvedIteration)}:`,
+                        boardName: matchedPreference.board_name,
+                        iteration: resolvedIteration,
+                        releases: toReleaseTitles(releases)
                     });
                 }
+
+                const projectDetails = await withTimeout(30000, (signal) =>
+                    getProjectIdAndTitleByName(client, ownerGroup, intent.extractedBoardName!, signal)
+                );
+
+                if (!projectDetails) {
+                    return res.json({
+                        type: "board_selection",
+                        message: `I couldn't find a board called "${intent.extractedBoardName}" on your GitHub workspace. Which board would you like me to check?`
+                    });
+                }
+
+                const pendingFunc = intent.args?.function ?? null;
+                await dbPool.execute(
+                    `INSERT INTO ghs_user_session_state
+                    (github_id, current_state, pending_iteration, pending_function, pending_board_name)
+                    VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                    current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?`,
+                    [githubId, resolvedIteration, pendingFunc, projectDetails.title, resolvedIteration, pendingFunc, projectDetails.title]
+                );
+
+                return res.json({
+                    type: "confirmation",
+                    message: `Found "${projectDetails.title}". Want me to remember this board for next time?`,
+                    boardName: projectDetails.title
+                });
             }
 
             const iterationLabel = formatIterationLabel(resolvedIteration);
@@ -433,9 +436,13 @@ async function main() {
                 const releases = await withTimeout(30000, (signal) =>
                     runTool(client, intent, { owner: ownerGroup, projectNumber: singlePref.project_id }, signal)
                 );
-                const releaseList = releases.map((r: any) => `• ${r.content?.title ?? "Untitled Issue"}`).join("\n");
+
                 return res.json({
-                    message: `Here are the planned releases for "${singlePref.board_name}" during the ${iterationLabel}:\n\n${releaseList || "• No active releases found."}`
+                    type: "release_list",
+                    message: `Here's what's planned for "${singlePref.board_name}" during the ${iterationLabel}:`,
+                    boardName: singlePref.board_name,
+                    iteration: resolvedIteration,
+                    releases: toReleaseTitles(releases)
                 });
             }
 
@@ -447,40 +454,45 @@ async function main() {
                         );
                         return {
                             boardName: pref.board_name,
-                            list: releases.map((r: any) => `  • ${r.content?.title ?? "Untitled Issue"}`).join("\n")
+                            releases: toReleaseTitles(releases),
+                            error: null as string | null
                         };
                     } catch (err) {
-                        console.error(`Failed to fetch releases for board ${pref.board_name}:`, err);
+                        console.error(`Couldn't fetch releases for board "${pref.board_name}":`, err);
                         return {
                             boardName: pref.board_name,
-                            list: "  Unable to reach GitHub tracking data for this project right now."
+                            releases: [] as string[],
+                            error: "Unable to reach GitHub for this board right now."
                         };
                     }
                 })
             );
 
-            let combinedMessage = `Here is your status breakdown across your saved preferences for the ${iterationLabel}:\n\n`;
-
-            const boardReports = multiReleaseResults.map((result) => {
-                const content = result.list || "  • No active releases found for this cycle.";
-                return `### ${result.boardName}\n${content}`;
-            }).join("\n\n");
-
             return res.json({
-                message: combinedMessage + boardReports
+                type: "multi_board_release_list",
+                message: `Here's your release breakdown across all saved boards for the ${iterationLabel}:`,
+                iteration: resolvedIteration,
+                boards: multiReleaseResults
             });
 
         } catch (error: any) {
-            console.error("Pipeline Failure: ", error);
+            console.error("Request failed unexpectedly:", error);
             if (error.message === "Request timed out") {
-                return res.status(504).json({ error: "The request timed out while communicating with GitHub. Please check back in a moment." });
+                return res.status(504).json({
+                    error: "That took too long reaching GitHub. Please try again in a moment."
+                });
             }
-            return res.status(500).json({ error: "Internal server error. Something went wrong processing that request." });
+            return res.status(500).json({
+                error: "Something went wrong on our end. Please try again in a moment."
+            });
         }
     });
 
     const port = Number(process.env.PORT) || 8080;
-    app.listen(port, () => console.log(`Stats Service online on: ${port}`));
+    app.listen(port, () => console.log(`Stats Service is up and running on port ${port}.`));
 }
 
-main().catch(console.error);
+main().catch((err) => {
+    console.error("Fatal error during startup, service failed to start:", err);
+    process.exit(1);
+});

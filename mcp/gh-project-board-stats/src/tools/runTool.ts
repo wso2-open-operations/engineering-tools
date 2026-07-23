@@ -53,7 +53,7 @@ export async function runTool(
 ) {
     const [metaRows]: any = await dbPool.execute(
         `SELECT layout_type, release_column_name
-         FROM project_board_metadata
+         FROM ghs_project_board_metadata
          WHERE project_id = ?`,
         [target.projectNumber]
     );
@@ -104,12 +104,12 @@ export async function runTool(
     while (hasNextPage) {
 
         if (signal?.aborted) {
-            console.warn("[Warning] runTool: Operation aborted by signal.");
+            console.warn("Operation aborted by signal.");
             break;
         }
-        
+
         if (page > MAX_PAGES) {
-            console.warn(`[Warning] runTool: Reached maximum safety pagination limit of ${MAX_PAGES} pages. Halting loop to prevent an infinite run.`);
+            console.warn(`Reached maximum safety pagination limit of ${MAX_PAGES} pages. Halting loop to prevent an infinite run.`);
             break;
         }
 
