@@ -17,7 +17,7 @@ ARG TARGETARCH
 WORKDIR /app
 
 # Upgrade npm to pull in a patched version of its bundled 'tar' dependency
-RUN npm install -g npm@latest
+RUN npm install -g npm@12.0.1
 
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
