@@ -16,6 +16,9 @@ ARG TARGETARCH
 
 WORKDIR /app
 
+# Upgrade npm to pull in a patched version of its bundled 'tar' dependency
+RUN npm install -g npm@12.0.1
+
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
@@ -31,7 +34,7 @@ RUN apt-get update && \
     else \
     echo "Unsupported architecture: $REAL_ARCH" && exit 1; \
     fi && \
-    curl -L "https://github.com/github/github-mcp-server/releases/download/v1.5.0/github-mcp-server_Linux_${MCP_ARCH}.tar.gz" \
+    curl -L "https://github.com/github/github-mcp-server/releases/download/v1.7.0/github-mcp-server_Linux_${MCP_ARCH}.tar.gz" \
       -o /tmp/github-mcp-server.tar.gz && \
     tar -xzf /tmp/github-mcp-server.tar.gz -C /tmp && \
     mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server && \
