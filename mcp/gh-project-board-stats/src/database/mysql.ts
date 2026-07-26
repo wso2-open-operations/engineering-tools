@@ -72,9 +72,23 @@ export async function initializeDatabase() {
         pending_iteration VARCHAR(50),
         pending_function VARCHAR(100),
         pending_epic_search VARCHAR(150),
-        pending_list_epics TINYINT(1) DEFAULT 0
+        pending_list_epics TINYINT(1) DEFAULT 0,
+        active_board_name VARCHAR(255) NULL,
+        active_project_id INT NULL
       );
     `);
+
+    try {
+      await dbPool.execute(`
+        ALTER TABLE ghs_user_session_state 
+        ADD COLUMN active_board_name VARCHAR(255) NULL,
+        ADD COLUMN active_project_id INT NULL;
+      `);
+    } catch (err: any) {
+      if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') {
+        throw err;
+      }
+    }
 
     await dbPool.execute(`
       CREATE TABLE IF NOT EXISTS ghs_user_project_preferences (
