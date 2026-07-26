@@ -31,7 +31,7 @@ export function formatReleaseList(boardName: string, iterationLabel: string, rel
         return `${header}\n\n*No releases or new features scheduled for this period! All clear.*`;
     }
 
-    const itemsList = releases.map(r => `*  **${r}**`).join("\n");
+    const itemsList = releases.map(r => `* **${r}**`).join("\n");
     return `${header}\n\n${itemsList}\n\n_Need to filter by team or check another iteration? Just let me know!_`;
 }
 

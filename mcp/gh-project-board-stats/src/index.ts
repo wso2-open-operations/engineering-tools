@@ -273,7 +273,15 @@ async function main() {
             const session = sessionRows[0] || null;
             const savedPreferences: Array<{ project_id: number; board_name: string }> = prefRows || [];
 
-            // User responding to "Want me to remember this board?"
+            async function updateActiveSessionBoard(boardName: string, projectId: number) {
+                await dbPool.execute(
+                    `INSERT INTO ghs_user_session_state (github_id, current_state, active_board_name, active_project_id) 
+                 VALUES (?, 'IDLE', ?, ?) 
+                 ON DUPLICATE KEY UPDATE current_state='IDLE', active_board_name=?, active_project_id=?`,
+                    [githubId, boardName, projectId, boardName, projectId]
+                );
+            }
+
             if (session && session.current_state === 'AWAITING_REMEMBER_CONFIRMATION') {
                 const isYes = /^(yes|yep|sure|yeah|y)$/i.test(question.trim());
                 const targetIteration = session.pending_iteration || 'this_week';
@@ -285,7 +293,7 @@ async function main() {
                 );
 
                 if (!projectDetails) {
-                    await dbPool.execute("DELETE FROM ghs_user_session_state WHERE github_id = ?", [githubId]);
+                    await dbPool.execute("UPDATE ghs_user_session_state SET current_state='IDLE' WHERE github_id = ?", [githubId]);
                     return res.json({
                         type: "error",
                         text: `I couldn't find **"${session.pending_board_name}"** on GitHub anymore. Let's start fresh—which board would you like to check?`
@@ -327,7 +335,7 @@ async function main() {
                     runTool(client, intentArgs, { owner: ownerGroup, projectNumber: projectDetails.number }, signal)
                 );
 
-                await dbPool.execute("DELETE FROM ghs_user_session_state WHERE github_id = ?", [githubId]);
+                await updateActiveSessionBoard(projectDetails.title, projectDetails.number);
 
                 const savedPrefix = isYes
                     ? `Saved **${projectDetails.title}** to your preferred boards! `
@@ -393,7 +401,10 @@ async function main() {
                 });
             }
 
-            const primaryContextName = savedPreferences.length > 0 ? savedPreferences[0].board_name : null;
+            const activeSessionBoardName = session?.active_board_name ?? null;
+            const savedDefaultBoardName = savedPreferences.length > 0 ? savedPreferences[0].board_name : null;
+            const primaryContextName = activeSessionBoardName || savedDefaultBoardName;
+
             const intent = await routeIntent(anthropic, question, primaryContextName);
 
             const resolvedIteration = intent.args?.iteration ?? 'this_week';
@@ -406,9 +417,8 @@ async function main() {
                     p => p.board_name.toLowerCase().trim() === intent.extractedBoardName!.toLowerCase().trim()
                 );
             }
-
-            // No saved boards and no board specified
-            if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (savedPreferences.length === 0 && !intent.extractedBoardName)) {
+            //  No board specified, and either no active session or no saved preference 
+            if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (!primaryContextName && !intent.extractedBoardName)) {
                 const discovery = await withTimeout(30000, (signal) => {
                     if (signal.aborted) return Promise.reject(new Error("Request aborted"));
                     return client.callTool({
@@ -423,7 +433,9 @@ async function main() {
                 const githubBoardsList = projects.map((p: any) => p.title) ?? [];
 
                 await dbPool.execute(
-                    "INSERT INTO ghs_user_session_state (github_id, current_state, pending_iteration, pending_function, pending_epic_search, pending_list_epics) VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?, ?, ?) ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?, pending_epic_search=?, pending_list_epics=?",
+                    `INSERT INTO ghs_user_session_state (github_id, current_state, pending_iteration, pending_function, pending_epic_search, pending_list_epics) 
+                 VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?, pending_epic_search=?, pending_list_epics=?`,
                     [githubId, resolvedIteration, intent.args?.function ?? null, epicSearch, listEpics, resolvedIteration, intent.args?.function ?? null, epicSearch, listEpics]
                 );
 
@@ -444,12 +456,14 @@ async function main() {
                 });
             }
 
-            // board specified or single saved board
+            // Board explicitly mentioned by user, and it matches a saved preference
             if (intent.extractedBoardName) {
                 if (matchedPreference) {
                     const results = await withTimeout(30000, (signal) =>
                         runTool(client, intent, { owner: ownerGroup, projectNumber: matchedPreference.project_id }, signal)
                     );
+
+                    await updateActiveSessionBoard(matchedPreference.board_name, matchedPreference.project_id);
 
                     if (listEpics) {
                         const epics = toEpicItems(results);
@@ -495,10 +509,10 @@ async function main() {
                 const pendingFunc = intent.args?.function ?? null;
                 await dbPool.execute(
                     `INSERT INTO ghs_user_session_state
-          (github_id, current_state, pending_iteration, pending_function, pending_board_name, pending_epic_search, pending_list_epics)
-          VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?, ?, ?)
-          ON DUPLICATE KEY UPDATE
-          current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?, pending_epic_search=?, pending_list_epics=?`,
+                 (github_id, current_state, pending_iteration, pending_function, pending_board_name, pending_epic_search, pending_list_epics)
+                 VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                 current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?, pending_epic_search=?, pending_list_epics=?`,
                     [
                         githubId, resolvedIteration, pendingFunc, projectDetails.title, epicSearch, listEpics,
                         resolvedIteration, pendingFunc, projectDetails.title, epicSearch, listEpics
@@ -512,21 +526,35 @@ async function main() {
                 });
             }
 
-            // Single saved board
-            const iterationLabel = formatIterationLabel(resolvedIteration);
+            // Active session context or single preference target 
+            const activeTargetBoardName = primaryContextName;
+            let activeProjectId: number | null = session?.active_project_id ?? null;
 
-            if (savedPreferences.length === 1) {
-                const singlePref = savedPreferences[0];
+            if (!activeProjectId) {
+                const matchedSaved = savedPreferences.find(p => p.board_name === activeTargetBoardName);
+                if (matchedSaved) {
+                    activeProjectId = matchedSaved.project_id;
+                } else if (activeTargetBoardName) {
+                    const projectDetails = await withTimeout(30000, (signal) =>
+                        getProjectIdAndTitleByName(client, ownerGroup, activeTargetBoardName, signal)
+                    );
+                    activeProjectId = projectDetails?.number ?? null;
+                }
+            }
+
+            if (activeTargetBoardName && activeProjectId) {
                 const results = await withTimeout(30000, (signal) =>
-                    runTool(client, intent, { owner: ownerGroup, projectNumber: singlePref.project_id }, signal)
+                    runTool(client, intent, { owner: ownerGroup, projectNumber: activeProjectId! }, signal)
                 );
+
+                await updateActiveSessionBoard(activeTargetBoardName, activeProjectId);
 
                 if (listEpics) {
                     const epics = toEpicItems(results);
                     return res.json({
                         type: "epic_list",
-                        text: formatEpicList(singlePref.board_name, epics),
-                        boardName: singlePref.board_name,
+                        text: formatEpicList(activeTargetBoardName, epics),
+                        boardName: activeTargetBoardName,
                         epics
                     });
                 }
@@ -534,8 +562,8 @@ async function main() {
                     const items = toEpicItems(results);
                     return res.json({
                         type: "epic_search_results",
-                        text: formatEpicSearchResults(singlePref.board_name, epicSearch, items),
-                        boardName: singlePref.board_name,
+                        text: formatEpicSearchResults(activeTargetBoardName, epicSearch, items),
+                        boardName: activeTargetBoardName,
                         searchTerm: epicSearch,
                         items
                     });
@@ -544,14 +572,14 @@ async function main() {
                 const releases = toReleaseTitles(results);
                 return res.json({
                     type: "release_list",
-                    text: formatReleaseList(singlePref.board_name, iterationLabel, releases),
-                    boardName: singlePref.board_name,
+                    text: formatReleaseList(activeTargetBoardName, formatIterationLabel(resolvedIteration), releases),
+                    boardName: activeTargetBoardName,
                     iteration: resolvedIteration,
                     releases
                 });
             }
 
-            // Multi-board summary
+            // Multi-board scenario: no explicit board, but user has saved preferences
             const multiResults: MultiBoardResult[] = await Promise.all(
                 savedPreferences.map(async (pref) => {
                     try {
@@ -572,6 +600,8 @@ async function main() {
                     }
                 })
             );
+
+            const iterationLabel = formatIterationLabel(resolvedIteration);
 
             if (listEpics) {
                 let text = "Here are the Epics across your saved boards:\n\n";
