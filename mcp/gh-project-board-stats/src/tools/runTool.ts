@@ -16,7 +16,7 @@
 
 import { getIterationValue, isMatchingIteration } from "../services/iteration.service";
 import { getFieldId } from "../services/projectField.service";
-import { isRelease, belongsToFunction } from "../services/release.service";
+import { isRelease, belongsToFunction, isEpicTypeItem, matchesEpicSearch, getEpicLabelText } from "../services/release.service";
 import { dbPool } from "../database/mysql";
 
 interface RuntimeTarget {
@@ -135,6 +135,31 @@ export async function runTool(
         } else {
             page++;
         }
+    }
+
+    const listEpics: boolean = route?.args?.listEpics === true;
+    const epicSearch: string | null = route?.args?.epicSearch ?? null;
+    const requestedFunction: string | null = route?.args?.function ?? null;
+
+    if (listEpics) {
+        return allItems.filter((item: any) => {
+            if (!isEpicTypeItem(item)) return false;
+            if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
+            return true;
+        });
+    }
+
+    if (epicSearch) {
+        return allItems
+            .filter((item: any) => {
+                if (!matchesEpicSearch(item, epicSearch)) return false;
+                if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
+                return true;
+            })
+            .map((item: any) => ({
+                ...item,
+                epicLabelText: getEpicLabelText(item)
+            }));
     }
 
     return allItems.filter((item: any) => {

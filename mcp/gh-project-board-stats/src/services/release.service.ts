@@ -21,8 +21,13 @@ export function isRelease(item: any): boolean {
     const labels = item.content?.labels ?? [];
 
     return labels.some((label: any) => {
-        const labelName = typeof label === "string" ? label : label?.name ?? "";
-        return labelName.toLowerCase().includes("new feature");
+        const labelName = (typeof label === "string" ? label : label?.name ?? "").toLowerCase();
+        return (
+            labelName.includes("new feature") ||
+            labelName.includes("feature") ||
+            labelName.includes("enhancement") ||
+            labelName.includes("release")
+        );
     });
 }
 
@@ -34,4 +39,37 @@ export function belongsToFunction(item: any, functionName: string): boolean {
     }
 
     return String(functionValue).toLowerCase() === functionName.toLowerCase();
+}
+
+function getLabelNames(item: any): string[] {
+    const labels = item.content?.labels ?? [];
+    return labels.map((label: any) =>
+        typeof label === "string" ? label : label?.name ?? ""
+    );
+}
+
+export function isEpicTypeItem(item: any): boolean {
+    const labels = getLabelNames(item);
+    return labels.some((label) => label.toLowerCase() === "type/epic");
+}
+
+export function matchesEpicSearch(item: any, searchTerm: string): boolean {
+    const labels = getLabelNames(item);
+    const target = searchTerm.trim().toLowerCase();
+    if (!target) return false;
+
+    return labels.some((label) => {
+        const match = /^epic\/(.+)$/i.exec(label.trim());
+        if (!match) return false;
+        return match[1].trim().toLowerCase().includes(target);
+    });
+}
+
+export function getEpicLabelText(item: any): string | null {
+    const labels = getLabelNames(item);
+    for (const label of labels) {
+        const match = /^epic\/(.+)$/i.exec(label.trim());
+        if (match) return match[1].trim();
+    }
+    return null;
 }

@@ -70,7 +70,9 @@ export async function initializeDatabase() {
         current_state VARCHAR(50) NOT NULL,
         pending_board_name VARCHAR(150),
         pending_iteration VARCHAR(50),
-        pending_function VARCHAR(100)
+        pending_function VARCHAR(100),
+        pending_epic_search VARCHAR(150),
+        pending_list_epics TINYINT(1) DEFAULT 0
       );
     `);
 
