@@ -176,8 +176,9 @@ function toEpicItems(items: any[]): Array<{ title: string; epicLabel: string | n
 }
 
 function truncateString(val: string | null | undefined, maxLen = 150): string | null {
-    if (!val) return null;
-    return val.trim().slice(0, maxLen);
+    if (val === null || val === undefined) return null;
+    const trimmed = val.trim();
+    return trimmed.length === 0 ? null : trimmed.slice(0, maxLen);
 }
 
 async function main() {
@@ -294,8 +295,9 @@ async function main() {
 
                 if (!projectDetails) {
                     await dbPool.execute("UPDATE ghs_user_session_state SET current_state='IDLE' WHERE github_id = ?", [githubId]);
-                    return res.status(404).json({
-                        error: `I couldn't find "${session.pending_board_name}" on GitHub anymore. Let's start fresh, which board would you like to check?`
+                    return res.json({
+                        type: "board_selection",
+                        text: `I couldn't find "${session.pending_board_name}" on GitHub anymore. Let's start fresh, which board would you like to check?`
                     });
                 }
 
@@ -400,7 +402,7 @@ async function main() {
                 });
             }
 
-           const activeSessionBoardName = isAllBoardsQuery ? null : (session?.active_board_name ?? null);
+            const activeSessionBoardName = isAllBoardsQuery ? null : (session?.active_board_name ?? null);
             const savedDefaultBoardName = savedPreferences.length === 1 ? savedPreferences[0].board_name : null;
             const primaryContextName = activeSessionBoardName || savedDefaultBoardName;
 
