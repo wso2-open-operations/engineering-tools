@@ -78,15 +78,20 @@ export async function initializeDatabase() {
       );
     `);
 
-    try {
-      await dbPool.execute(`
-        ALTER TABLE ghs_user_session_state 
-        ADD COLUMN active_board_name VARCHAR(255) NULL,
-        ADD COLUMN active_project_id INT NULL;
-      `);
-    } catch (err: any) {
-      if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') {
-        throw err;
+    const sessionStateColumnMigrations = [
+      "ALTER TABLE ghs_user_session_state ADD COLUMN pending_epic_search VARCHAR(150) NULL",
+      "ALTER TABLE ghs_user_session_state ADD COLUMN pending_list_epics TINYINT(1) DEFAULT 0",
+      "ALTER TABLE ghs_user_session_state ADD COLUMN active_board_name VARCHAR(255) NULL",
+      "ALTER TABLE ghs_user_session_state ADD COLUMN active_project_id INT NULL"
+    ];
+
+    for (const statement of sessionStateColumnMigrations) {
+      try {
+        await dbPool.execute(statement);
+      } catch (err: any) {
+        if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') {
+          throw err;
+        }
       }
     }
 
