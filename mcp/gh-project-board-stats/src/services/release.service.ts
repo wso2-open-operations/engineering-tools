@@ -21,12 +21,14 @@ export function isRelease(item: any): boolean {
     const labels = item.content?.labels ?? [];
 
     return labels.some((label: any) => {
-        const labelName = (typeof label === "string" ? label : label?.name ?? "").toLowerCase();
-        return (
-            labelName.includes("new feature") ||
-            labelName.includes("feature") ||
-            labelName.includes("enhancement") ||
-            labelName.includes("release")
+        const labelName = (typeof label === "string" ? label : label?.name ?? "").trim().toLowerCase();
+
+        if (labelName.startsWith("epic/") || labelName.startsWith("type/")) {
+            return false;
+        }
+
+        return ["feature", "enhancement", "release"].some((keyword) =>
+            labelName.includes(keyword)
         );
     });
 }
@@ -55,7 +57,13 @@ export function isEpicTypeItem(item: any): boolean {
 
 export function matchesEpicSearch(item: any, searchTerm: string): boolean {
     const labels = getLabelNames(item);
-    const target = searchTerm.trim().toLowerCase();
+
+    const target = searchTerm
+        .trim()
+        .toLowerCase()
+        .replace(/^epic\//, "")
+        .trim();
+
     if (!target) return false;
 
     return labels.some((label) => {

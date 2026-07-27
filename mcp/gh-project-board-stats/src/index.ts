@@ -20,27 +20,17 @@ import Anthropic from "@anthropic-ai/sdk";
 import jwt from "jsonwebtoken";
 import jwksClient from "jwks-rsa";
 import { connectMCP } from "./tools/mcpClient";
-import { routeIntent } from "./agent/routeIntent";
+import { routeIntent, RoutedIntent } from "./agent/routeIntent";
 import { runTool } from "./tools/runTool";
 import { dbPool, initializeDatabase } from "./database/mysql";
 import {
     formatReleaseList,
     formatEpicList,
     formatEpicSearchResults,
-    formatMultiBoardReleases
+    formatMultiBoardReleases,
+    formatMultiBoardEpicList,
+    formatMultiBoardEpicSearchResults
 } from "./utils/chatFormatter";
-
-export interface RoutedIntent {
-    status: "READY" | "REQUIRES_BOARD_SELECTION";
-    extractedBoardName: string | null;
-    args: {
-        iteration: string | null;
-        function: string | null;
-        epicSearch: string | null;
-        listEpics: boolean;
-    };
-    conversationalResponse: string | null;
-}
 
 interface MultiBoardResult {
     boardName: string;
@@ -418,7 +408,7 @@ async function main() {
                     p => p.board_name.toLowerCase().trim() === intent.extractedBoardName!.toLowerCase().trim()
                 );
             }
-            //  No board specified, and either no active session or no saved preference 
+            // No board specified, and either no active session or no saved preference 
             if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (!primaryContextName && !intent.extractedBoardName && savedPreferences.length === 0)) {
                 const discovery = await withTimeout(30000, (signal) => {
                     if (signal.aborted) return Promise.reject(new Error("Request aborted"));
@@ -543,6 +533,17 @@ async function main() {
                 }
             }
 
+            if (!activeProjectId && activeTargetBoardName) {
+                await dbPool.execute(
+                    "UPDATE ghs_user_session_state SET active_board_name = NULL, active_project_id = NULL WHERE github_id = ?",
+                    [githubId]
+                );
+                return res.json({
+                    type: "board_selection",
+                    text: `I couldn't reach **"${activeTargetBoardName}"** anymore. Which board would you like to check?`
+                });
+            }
+
             if (activeTargetBoardName && activeProjectId) {
                 const results = await withTimeout(30000, (signal) =>
                     runTool(client, intent, { owner: ownerGroup, projectNumber: activeProjectId! }, signal)
@@ -591,7 +592,7 @@ async function main() {
                             return { boardName: pref.board_name, items: toEpicItems(results), error: null as string | null };
                         }
                         return { boardName: pref.board_name, releases: toReleaseTitles(results), error: null as string | null };
-                    } catch (err) {
+                    } catch (err: any) {
                         console.error(`Couldn't fetch data for board "${pref.board_name}":`, err);
                         return {
                             boardName: pref.board_name,
@@ -605,35 +606,17 @@ async function main() {
             const iterationLabel = formatIterationLabel(resolvedIteration);
 
             if (listEpics) {
-                let text = "Here are the Epics across your saved boards:\n\n";
-                for (const b of multiResults) {
-                    text += `### **${b.boardName}**\n`;
-                    if (b.items && b.items.length > 0) {
-                        text += b.items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
-                    } else {
-                        text += "* _No Epics found._\n\n";
-                    }
-                }
                 return res.json({
                     type: "multi_board_epic_list",
-                    text: text.trim(),
+                    text: formatMultiBoardEpicList(multiResults),
                     boards: multiResults
                 });
             }
 
             if (epicSearch) {
-                let text = `Here's what matched **"${epicSearch}"** across your saved boards:\n\n`;
-                for (const b of multiResults) {
-                    text += `### **${b.boardName}**\n`;
-                    if (b.items && b.items.length > 0) {
-                        text += b.items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
-                    } else {
-                        text += `* _No matches for "${epicSearch}"._\n\n`;
-                    }
-                }
                 return res.json({
                     type: "multi_board_epic_search_results",
-                    text: text.trim(),
+                    text: formatMultiBoardEpicSearchResults(epicSearch, multiResults),
                     searchTerm: epicSearch,
                     boards: multiResults
                 });
