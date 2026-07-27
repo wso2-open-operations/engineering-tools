@@ -16,7 +16,7 @@
 
 import { getIterationValue, isMatchingIteration } from "../services/iteration.service";
 import { getFieldId } from "../services/projectField.service";
-import { isRelease, belongsToFunction } from "../services/release.service";
+import { isRelease, belongsToFunction, isEpicTypeItem, matchesEpicSearch, getEpicLabelText } from "../services/release.service";
 import { dbPool } from "../database/mysql";
 
 interface RuntimeTarget {
@@ -43,6 +43,27 @@ function safeJsonParse(text: string): any {
     }
 
     return JSON.parse(trimmed);
+}
+
+function matchesLayoutFilter(
+    item: any,
+    layoutType: string,
+    releaseColumn: string,
+    requestedIteration?: string
+): boolean {
+    if (layoutType === "ITERATION_BASED") {
+
+        if (!requestedIteration) return true;
+        const iteration = getIterationValue(item);
+        return isMatchingIteration(iteration, requestedIteration);
+    }
+
+    const status =
+        item.fields?.find(
+            (f: any) => f.name?.toLowerCase() === "status"
+        )?.value ?? "";
+
+    return String(status).toLowerCase() === releaseColumn.toLowerCase();
 }
 
 export async function runTool(
@@ -102,7 +123,6 @@ export async function runTool(
     let hasNextPage = true;
 
     while (hasNextPage) {
-
         if (signal?.aborted) {
             console.warn("Operation aborted by signal.");
             break;
@@ -137,35 +157,38 @@ export async function runTool(
         }
     }
 
+    const listEpics: boolean = route?.args?.listEpics === true;
+    const epicSearch: string | null = route?.args?.epicSearch ?? null;
+    const requestedFunction: string | null = route?.args?.function ?? null;
+    const requestedIteration: string | undefined = route?.args?.iteration;
+
+    if (listEpics) {
+        return allItems.filter((item: any) => {
+            if (!isEpicTypeItem(item)) return false;
+            if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
+            if (!matchesLayoutFilter(item, layoutType, releaseColumn, requestedIteration)) return false;
+            return true;
+        });
+    }
+
+    if (epicSearch) {
+        return allItems
+            .filter((item: any) => {
+                if (!matchesEpicSearch(item, epicSearch)) return false;
+                if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
+                if (!matchesLayoutFilter(item, layoutType, releaseColumn, requestedIteration)) return false;
+                return true;
+            })
+            .map((item: any) => ({
+                ...item,
+                epicLabelText: getEpicLabelText(item)
+            }));
+    }
+
     return allItems.filter((item: any) => {
-        if (!isRelease(item)) {
-            return false;
-        }
-
-        if (
-            route?.args?.function &&
-            !belongsToFunction(item, route.args.function)
-        ) {
-            return false;
-        }
-
-        if (layoutType === "ITERATION_BASED") {
-            const iteration = getIterationValue(item);
-            return isMatchingIteration(
-                iteration,
-                route?.args?.iteration
-            );
-        }
-
-        const status =
-            item.fields?.find(
-                (f: any) =>
-                    f.name?.toLowerCase() === "status"
-            )?.value ?? "";
-
-        return (
-            String(status).toLowerCase() ===
-            releaseColumn.toLowerCase()
-        );
+        if (!isRelease(item)) return false;
+        if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
+        if (!matchesLayoutFilter(item, layoutType, releaseColumn, requestedIteration)) return false;
+        return true;
     });
 }

@@ -25,6 +25,29 @@ const dbConfig = {
 
 export let dbPool: mysql.Pool;
 
+async function ensureSessionStateColumnsExist(pool: mysql.Pool): Promise<void> {
+  const sessionStateColumnMigrations = [
+    "ALTER TABLE ghs_user_session_state ADD COLUMN pending_epic_search VARCHAR(150) NULL",
+    "ALTER TABLE ghs_user_session_state ADD COLUMN pending_list_epics TINYINT(1) DEFAULT 0",
+    "ALTER TABLE ghs_user_session_state ADD COLUMN active_board_name VARCHAR(255) NULL",
+    "ALTER TABLE ghs_user_session_state ADD COLUMN active_project_id INT NULL"
+  ];
+
+  for (const statement of sessionStateColumnMigrations) {
+    try {
+      await pool.execute(statement);
+    } catch (err: any) {
+      if (err.errno === 1146 || err.code === 'ER_NO_SUCH_TABLE') {
+        console.warn("ghs_user_session_state is missing; run with RUN_MIGRATIONS=true to create it.");
+        return;
+      }
+      if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') {
+        throw err;
+      }
+    }
+  }
+}
+
 export async function initializeDatabase() {
   if (process.env.RUN_MIGRATIONS === 'true') {
     const connection = await mysql.createConnection({
@@ -87,6 +110,8 @@ export async function initializeDatabase() {
 
     console.log("Database structural tables checked/initialized with ghs_ prefix.");
   }
+
+  await ensureSessionStateColumnsExist(dbPool);
 
   console.log(`Database connection pool initialized successfully for database: ${dbConfig.database}`);
 }

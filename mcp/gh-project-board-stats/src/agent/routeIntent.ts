@@ -22,15 +22,17 @@ export interface RoutedIntent {
   args: {
     iteration: string | null;
     function: string | null;
+    epicSearch: string | null;
+    listEpics: boolean;
   };
   conversationalResponse: string | null;
   rawInput?: string;
 }
 
 function detectIterationFromRawInput(rawInput: string): string | null {
-  if (/next\s*week/i.test(rawInput)) return "next_week";
-  if (/last\s*week|previous\s*week/i.test(rawInput)) return "previous_week";
-  if (/this\s*week/i.test(rawInput)) return "this_week";
+  if (/next\s*(week|sprint|iteration)/i.test(rawInput)) return "next_week";
+  if (/last\s*(week|sprint|iteration)|previous\s*(week|sprint|iteration)/i.test(rawInput)) return "previous_week";
+  if (/this\s*(week|sprint|iteration)|current\s*(sprint|iteration)/i.test(rawInput)) return "this_week";
   return null;
 }
 
@@ -42,7 +44,9 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
     extractedBoardName: null,
     args: {
       iteration: recoveredIteration,
-      function: null
+      function: null,
+      epicSearch: null,
+      listEpics: false
     },
     conversationalResponse: "I couldn't quite process that request. Which project board would you like to view?",
     rawInput
@@ -74,6 +78,15 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
       if (!typedParsed.args.iteration && recoveredIteration) {
         typedParsed.args.iteration = recoveredIteration;
       }
+      if (typeof typedParsed.args.function === "undefined") {
+        typedParsed.args.function = null;
+      }
+      if (typeof typedParsed.args.epicSearch === "undefined") {
+        typedParsed.args.epicSearch = null;
+      }
+      if (typeof typedParsed.args.listEpics !== "boolean") {
+        typedParsed.args.listEpics = false;
+      }
 
       return typedParsed;
     }
@@ -104,11 +117,23 @@ Active Context Parameter:
 Return ONLY a single valid JSON object. Do not wrap code in text formatting blocks.
 
 Output Response Struct Evaluation Rules:
-1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, or providing confirmation details to initialize a board.
+1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, providing confirmation details to initialize a board, asking to see a list of Epics, or searching for items under a specific Epic/feature label.
 2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering") or if they want to SWITCH boards (e.g., "change board", "switch project", "look at another board").
 3. Parameter Extraction Matrix:
-   - "iteration": Capture window markers ("this_week", "next_week", "previous_week"). If the user mentions absolute time indicators like "last month" or custom intervals, output them verbatim. Default to "this_week".
-   - "function": Extract team parameters ("IAM", "People Operations"). If missing, return null.
+   - "iteration": Map natural time expressions into standard keys:
+     - Current period ("this week", "current sprint", "now", "today", "active iteration") -> "this_week"
+     - Next period ("next week", "upcoming sprint", "next release", "coming up") -> "next_week"
+     - Past period ("last week", "previous sprint", "past iteration", "completed") -> "previous_week"
+     If the user specifies an explicit named sprint, month, or custom interval (e.g., "Sprint 45", "July"), output that exact string verbatim. Default to "this_week".
+   - "function": Extract team or domain parameters (e.g., "IAM", "People Operations", "Frontend"). If missing, return null.
+   - "epicSearch": Extract the target epic term when the user asks about an epic or feature group.
+     Examples:
+     - "what's under epic test4" -> "test4"
+     - "show items tagged EPIC/login-v2" -> "login-v2"
+     - "breakdown of the auth feature group" -> "auth"
+     - "what features are in the billing epic?" -> "billing"
+     If not searching for a specific epic/label, return null.
+   - "listEpics": Set to true ONLY if the user is asking to list or see items that are themselves Epics (e.g., "show me all epics", "list epics", "what epics do we have"). Otherwise false.
 
 Provide output matching this strict schema structure:
 {
@@ -116,7 +141,9 @@ Provide output matching this strict schema structure:
   "extractedBoardName": string | null,
   "args": {
     "iteration": string | null,
-    "function": string | null
+    "function": string | null,
+    "epicSearch": string | null,
+    "listEpics": boolean
   },
   "conversationalResponse": string | null
 }
