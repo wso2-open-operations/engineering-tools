@@ -402,7 +402,8 @@ async function main() {
             }
 
             const activeSessionBoardName = session?.active_board_name ?? null;
-            const savedDefaultBoardName = savedPreferences.length > 0 ? savedPreferences[0].board_name : null;
+
+            const savedDefaultBoardName = savedPreferences.length === 1 ? savedPreferences[0].board_name : null;
             const primaryContextName = activeSessionBoardName || savedDefaultBoardName;
 
             const intent = await routeIntent(anthropic, question, primaryContextName);
@@ -418,7 +419,7 @@ async function main() {
                 );
             }
             //  No board specified, and either no active session or no saved preference 
-            if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (!primaryContextName && !intent.extractedBoardName)) {
+            if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (!primaryContextName && !intent.extractedBoardName && savedPreferences.length === 0)) {
                 const discovery = await withTimeout(30000, (signal) => {
                     if (signal.aborted) return Promise.reject(new Error("Request aborted"));
                     return client.callTool({
@@ -502,7 +503,7 @@ async function main() {
                 if (!projectDetails) {
                     return res.json({
                         type: "board_selection",
-                        text: `I couldn't find a board called **"${intent.extractedBoardName}"** on your workspace. Which board would you like to check?`
+                        text: `I couldn't find a board called "${intent.extractedBoardName}" on your workspace. Which board would you like to check?`
                     });
                 }
 
@@ -526,15 +527,15 @@ async function main() {
                 });
             }
 
-            // Active session context or single preference target 
+            // Active session context or single saved preference — exactly one target board
             const activeTargetBoardName = primaryContextName;
             let activeProjectId: number | null = session?.active_project_id ?? null;
 
-            if (!activeProjectId) {
+            if (activeTargetBoardName && !activeProjectId) {
                 const matchedSaved = savedPreferences.find(p => p.board_name === activeTargetBoardName);
                 if (matchedSaved) {
                     activeProjectId = matchedSaved.project_id;
-                } else if (activeTargetBoardName) {
+                } else {
                     const projectDetails = await withTimeout(30000, (signal) =>
                         getProjectIdAndTitleByName(client, ownerGroup, activeTargetBoardName, signal)
                     );
