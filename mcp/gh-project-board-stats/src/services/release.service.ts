@@ -23,7 +23,7 @@ export function isRelease(item: any): boolean {
     return labels.some((label: any) => {
         const labelName = (typeof label === "string" ? label : label?.name ?? "").trim().toLowerCase();
 
-        if (labelName.startsWith("epic/") || labelName.startsWith("type/")) {
+        if (labelName.startsWith("epic/") || labelName === "type/epic") {
             return false;
         }
 
@@ -52,7 +52,7 @@ function getLabelNames(item: any): string[] {
 
 export function isEpicTypeItem(item: any): boolean {
     const labels = getLabelNames(item);
-    return labels.some((label) => label.toLowerCase() === "type/epic");
+    return labels.some((label) => label.trim().toLowerCase() === "type/epic");
 }
 
 export function matchesEpicSearch(item: any, searchTerm: string): boolean {

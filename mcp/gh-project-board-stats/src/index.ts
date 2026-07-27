@@ -175,6 +175,11 @@ function toEpicItems(items: any[]): Array<{ title: string; epicLabel: string | n
     }));
 }
 
+function truncateString(val: string | null | undefined, maxLen = 150): string | null {
+    if (!val) return null;
+    return val.trim().slice(0, maxLen);
+}
+
 async function main() {
     if (!process.env.ANTHROPIC_API_KEY) {
         throw new Error("Initialization Failed: Missing ANTHROPIC_API_KEY environment variable");
@@ -264,13 +269,18 @@ async function main() {
             const savedPreferences: Array<{ project_id: number; board_name: string }> = prefRows || [];
 
             async function updateActiveSessionBoard(boardName: string, projectId: number) {
+                const safeBoardName = truncateString(boardName, 255);
                 await dbPool.execute(
-                    `INSERT INTO ghs_user_session_state (github_id, current_state, active_board_name, active_project_id) 
-                 VALUES (?, 'IDLE', ?, ?) 
-                 ON DUPLICATE KEY UPDATE current_state='IDLE', active_board_name=?, active_project_id=?`,
-                    [githubId, boardName, projectId, boardName, projectId]
+                    `INSERT INTO ghs_user_session_state 
+                     (github_id, current_state, active_board_name, active_project_id, pending_board_name, pending_iteration, pending_function, pending_epic_search, pending_list_epics) 
+                     VALUES (?, 'IDLE', ?, ?, NULL, NULL, NULL, NULL, 0) 
+                     ON DUPLICATE KEY UPDATE 
+                     current_state='IDLE', active_board_name=?, active_project_id=?, pending_board_name=NULL, pending_iteration=NULL, pending_function=NULL, pending_epic_search=NULL, pending_list_epics=0`,
+                    [githubId, safeBoardName, projectId, safeBoardName, projectId]
                 );
             }
+
+            const isAllBoardsQuery = /\b(all boards|across all|every board|all projects|across boards)\b/i.test(question);
 
             if (session && session.current_state === 'AWAITING_REMEMBER_CONFIRMATION') {
                 const isYes = /^(yes|yep|sure|yeah|y)$/i.test(question.trim());
@@ -284,9 +294,8 @@ async function main() {
 
                 if (!projectDetails) {
                     await dbPool.execute("UPDATE ghs_user_session_state SET current_state='IDLE' WHERE github_id = ?", [githubId]);
-                    return res.json({
-                        type: "error",
-                        text: `I couldn't find **"${session.pending_board_name}"** on GitHub anymore. Let's start fresh—which board would you like to check?`
+                    return res.status(404).json({
+                        error: `I couldn't find "${session.pending_board_name}" on GitHub anymore. Let's start fresh, which board would you like to check?`
                     });
                 }
 
@@ -299,7 +308,7 @@ async function main() {
                     if (existing.length === 0) {
                         await dbPool.execute(
                             "INSERT INTO ghs_user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered) VALUES (?, ?, ?, ?, 1)",
-                            [githubId, projectDetails.number, ownerGroup, projectDetails.title]
+                            [githubId, projectDetails.number, ownerGroup, truncateString(projectDetails.title, 150)]
                         );
                     } else {
                         await dbPool.execute(
@@ -381,7 +390,7 @@ async function main() {
 
                 await dbPool.execute(
                     "UPDATE ghs_user_session_state SET current_state = 'AWAITING_REMEMBER_CONFIRMATION', pending_board_name = ? WHERE github_id = ?",
-                    [projectDetails.title, githubId]
+                    [truncateString(projectDetails.title, 150), githubId]
                 );
 
                 return res.json({
@@ -391,15 +400,15 @@ async function main() {
                 });
             }
 
-            const activeSessionBoardName = session?.active_board_name ?? null;
-
+           const activeSessionBoardName = isAllBoardsQuery ? null : (session?.active_board_name ?? null);
             const savedDefaultBoardName = savedPreferences.length === 1 ? savedPreferences[0].board_name : null;
             const primaryContextName = activeSessionBoardName || savedDefaultBoardName;
 
             const intent = await routeIntent(anthropic, question, primaryContextName);
 
             const resolvedIteration = intent.args?.iteration ?? 'this_week';
-            const epicSearch = intent.args?.epicSearch ?? null;
+
+            const epicSearch = truncateString(intent.args?.epicSearch, 150);
             const listEpics = intent.args?.listEpics === true;
 
             let matchedPreference = null;
@@ -408,7 +417,8 @@ async function main() {
                     p => p.board_name.toLowerCase().trim() === intent.extractedBoardName!.toLowerCase().trim()
                 );
             }
-            // No board specified, and either no active session or no saved preference 
+
+            // No board specified, no sticky context, and no saved preference
             if ((intent.status === "REQUIRES_BOARD_SELECTION" && !matchedPreference) || (!primaryContextName && !intent.extractedBoardName && savedPreferences.length === 0)) {
                 const discovery = await withTimeout(30000, (signal) => {
                     if (signal.aborted) return Promise.reject(new Error("Request aborted"));
@@ -423,11 +433,14 @@ async function main() {
                 const projects = Array.isArray(raw) ? raw : (raw.projects || []);
                 const githubBoardsList = projects.map((p: any) => p.title) ?? [];
 
+                const safeIteration = truncateString(resolvedIteration, 50);
+                const safeFunction = truncateString(intent.args?.function, 100);
+
                 await dbPool.execute(
                     `INSERT INTO ghs_user_session_state (github_id, current_state, pending_iteration, pending_function, pending_epic_search, pending_list_epics) 
-                 VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?, ?, ?) 
-                 ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?, pending_epic_search=?, pending_list_epics=?`,
-                    [githubId, resolvedIteration, intent.args?.function ?? null, epicSearch, listEpics, resolvedIteration, intent.args?.function ?? null, epicSearch, listEpics]
+                     VALUES (?, 'AWAITING_BOARD_SELECTION', ?, ?, ?, ?) 
+                     ON DUPLICATE KEY UPDATE current_state='AWAITING_BOARD_SELECTION', pending_iteration=?, pending_function=?, pending_epic_search=?, pending_list_epics=?`,
+                    [githubId, safeIteration, safeFunction, epicSearch, listEpics, safeIteration, safeFunction, epicSearch, listEpics]
                 );
 
                 let formattedPrompt = "Which GitHub project board should we look at?\n\n";
@@ -497,16 +510,19 @@ async function main() {
                     });
                 }
 
-                const pendingFunc = intent.args?.function ?? null;
+                const safeIteration = truncateString(resolvedIteration, 50);
+                const safeFunc = truncateString(intent.args?.function, 100);
+                const safeTitle = truncateString(projectDetails.title, 150);
+
                 await dbPool.execute(
                     `INSERT INTO ghs_user_session_state
-                 (github_id, current_state, pending_iteration, pending_function, pending_board_name, pending_epic_search, pending_list_epics)
-                 VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                 current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?, pending_epic_search=?, pending_list_epics=?`,
+                     (github_id, current_state, pending_iteration, pending_function, pending_board_name, pending_epic_search, pending_list_epics)
+                     VALUES (?, 'AWAITING_REMEMBER_CONFIRMATION', ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE
+                     current_state='AWAITING_REMEMBER_CONFIRMATION', pending_iteration=?, pending_function=?, pending_board_name=?, pending_epic_search=?, pending_list_epics=?`,
                     [
-                        githubId, resolvedIteration, pendingFunc, projectDetails.title, epicSearch, listEpics,
-                        resolvedIteration, pendingFunc, projectDetails.title, epicSearch, listEpics
+                        githubId, safeIteration, safeFunc, safeTitle, epicSearch, listEpics,
+                        safeIteration, safeFunc, safeTitle, epicSearch, listEpics
                     ]
                 );
 
@@ -519,10 +535,12 @@ async function main() {
 
             // Active session context or single saved preference — exactly one target board
             const activeTargetBoardName = primaryContextName;
-            let activeProjectId: number | null = session?.active_project_id ?? null;
+            let activeProjectId: number | null = isAllBoardsQuery ? null : (session?.active_project_id ?? null);
 
             if (activeTargetBoardName && !activeProjectId) {
-                const matchedSaved = savedPreferences.find(p => p.board_name === activeTargetBoardName);
+                const matchedSaved = savedPreferences.find(
+                    p => p.board_name.toLowerCase().trim() === activeTargetBoardName.toLowerCase().trim()
+                );
                 if (matchedSaved) {
                     activeProjectId = matchedSaved.project_id;
                 } else {
@@ -533,7 +551,7 @@ async function main() {
                 }
             }
 
-            if (!activeProjectId && activeTargetBoardName) {
+            if (!activeProjectId && activeTargetBoardName && !isAllBoardsQuery) {
                 await dbPool.execute(
                     "UPDATE ghs_user_session_state SET active_board_name = NULL, active_project_id = NULL WHERE github_id = ?",
                     [githubId]
@@ -544,7 +562,7 @@ async function main() {
                 });
             }
 
-            if (activeTargetBoardName && activeProjectId) {
+            if (activeTargetBoardName && activeProjectId && !isAllBoardsQuery) {
                 const results = await withTimeout(30000, (signal) =>
                     runTool(client, intent, { owner: ownerGroup, projectNumber: activeProjectId! }, signal)
                 );
@@ -581,52 +599,59 @@ async function main() {
                 });
             }
 
-            // Multi-board scenario: no explicit board, but user has saved preferences
-            const multiResults: MultiBoardResult[] = await Promise.all(
-                savedPreferences.map(async (pref) => {
-                    try {
-                        const results = await withTimeout(15000, (signal) =>
-                            runTool(client, intent, { owner: ownerGroup, projectNumber: pref.project_id }, signal)
-                        );
-                        if (listEpics || epicSearch) {
-                            return { boardName: pref.board_name, items: toEpicItems(results), error: null as string | null };
+            // Multi-board scenario: User asked for "all boards" or has saved preferences with no sticky active board
+            if (savedPreferences.length > 0) {
+                const multiResults: MultiBoardResult[] = await Promise.all(
+                    savedPreferences.map(async (pref) => {
+                        try {
+                            const results = await withTimeout(15000, (signal) =>
+                                runTool(client, intent, { owner: ownerGroup, projectNumber: pref.project_id }, signal)
+                            );
+                            if (listEpics || epicSearch) {
+                                return { boardName: pref.board_name, items: toEpicItems(results), error: null as string | null };
+                            }
+                            return { boardName: pref.board_name, releases: toReleaseTitles(results), error: null as string | null };
+                        } catch (err: any) {
+                            console.error(`Couldn't fetch data for board "${pref.board_name}":`, err);
+                            return {
+                                boardName: pref.board_name,
+                                ...(listEpics || epicSearch ? { items: [] } : { releases: [] }),
+                                error: "Unable to reach GitHub for this board right now."
+                            };
                         }
-                        return { boardName: pref.board_name, releases: toReleaseTitles(results), error: null as string | null };
-                    } catch (err: any) {
-                        console.error(`Couldn't fetch data for board "${pref.board_name}":`, err);
-                        return {
-                            boardName: pref.board_name,
-                            ...(listEpics || epicSearch ? { items: [] } : { releases: [] }),
-                            error: "Unable to reach GitHub for this board right now."
-                        };
-                    }
-                })
-            );
+                    })
+                );
 
-            const iterationLabel = formatIterationLabel(resolvedIteration);
+                const iterationLabel = formatIterationLabel(resolvedIteration);
 
-            if (listEpics) {
+                if (listEpics) {
+                    return res.json({
+                        type: "multi_board_epic_list",
+                        text: formatMultiBoardEpicList(multiResults),
+                        boards: multiResults
+                    });
+                }
+
+                if (epicSearch) {
+                    return res.json({
+                        type: "multi_board_epic_search_results",
+                        text: formatMultiBoardEpicSearchResults(epicSearch, multiResults),
+                        searchTerm: epicSearch,
+                        boards: multiResults
+                    });
+                }
+
                 return res.json({
-                    type: "multi_board_epic_list",
-                    text: formatMultiBoardEpicList(multiResults),
-                    boards: multiResults
-                });
-            }
-
-            if (epicSearch) {
-                return res.json({
-                    type: "multi_board_epic_search_results",
-                    text: formatMultiBoardEpicSearchResults(epicSearch, multiResults),
-                    searchTerm: epicSearch,
+                    type: "multi_board_release_list",
+                    text: formatMultiBoardReleases(iterationLabel, multiResults),
+                    iteration: resolvedIteration,
                     boards: multiResults
                 });
             }
 
             return res.json({
-                type: "multi_board_release_list",
-                text: formatMultiBoardReleases(iterationLabel, multiResults),
-                iteration: resolvedIteration,
-                boards: multiResults
+                type: "board_selection",
+                text: "You don't have any saved default boards yet. Which board would you like to check?"
             });
 
         } catch (error: any) {

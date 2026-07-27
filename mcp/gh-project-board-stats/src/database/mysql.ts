@@ -25,6 +25,25 @@ const dbConfig = {
 
 export let dbPool: mysql.Pool;
 
+async function ensureSessionStateColumnsExist(pool: mysql.Pool): Promise<void> {
+  const sessionStateColumnMigrations = [
+    "ALTER TABLE ghs_user_session_state ADD COLUMN pending_epic_search VARCHAR(150) NULL",
+    "ALTER TABLE ghs_user_session_state ADD COLUMN pending_list_epics TINYINT(1) DEFAULT 0",
+    "ALTER TABLE ghs_user_session_state ADD COLUMN active_board_name VARCHAR(255) NULL",
+    "ALTER TABLE ghs_user_session_state ADD COLUMN active_project_id INT NULL"
+  ];
+
+  for (const statement of sessionStateColumnMigrations) {
+    try {
+      await pool.execute(statement);
+    } catch (err: any) {
+      if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') {
+        throw err;
+      }
+    }
+  }
+}
+
 export async function initializeDatabase() {
   if (process.env.RUN_MIGRATIONS === 'true') {
     const connection = await mysql.createConnection({
@@ -70,30 +89,9 @@ export async function initializeDatabase() {
         current_state VARCHAR(50) NOT NULL,
         pending_board_name VARCHAR(150),
         pending_iteration VARCHAR(50),
-        pending_function VARCHAR(100),
-        pending_epic_search VARCHAR(150),
-        pending_list_epics TINYINT(1) DEFAULT 0,
-        active_board_name VARCHAR(255) NULL,
-        active_project_id INT NULL
+        pending_function VARCHAR(100)
       );
     `);
-
-    const sessionStateColumnMigrations = [
-      "ALTER TABLE ghs_user_session_state ADD COLUMN pending_epic_search VARCHAR(150) NULL",
-      "ALTER TABLE ghs_user_session_state ADD COLUMN pending_list_epics TINYINT(1) DEFAULT 0",
-      "ALTER TABLE ghs_user_session_state ADD COLUMN active_board_name VARCHAR(255) NULL",
-      "ALTER TABLE ghs_user_session_state ADD COLUMN active_project_id INT NULL"
-    ];
-
-    for (const statement of sessionStateColumnMigrations) {
-      try {
-        await dbPool.execute(statement);
-      } catch (err: any) {
-        if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') {
-          throw err;
-        }
-      }
-    }
 
     await dbPool.execute(`
       CREATE TABLE IF NOT EXISTS ghs_user_project_preferences (
@@ -108,6 +106,7 @@ export async function initializeDatabase() {
 
     console.log("Database structural tables checked/initialized with ghs_ prefix.");
   }
+  await ensureSessionStateColumnsExist(dbPool);
 
   console.log(`Database connection pool initialized successfully for database: ${dbConfig.database}`);
 }
