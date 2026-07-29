@@ -43,7 +43,8 @@ async function runColumnMigrations(pool: mysql.Pool): Promise<void> {
       await pool.execute(statement);
     } catch (err: any) {
       if (err.errno === 1146 || err.code === "ER_NO_SUCH_TABLE") {
-        continue;
+        console.error(`Required table is missing: ${statement}`, err);
+        throw err;
       }
 
       if (err.errno === 1060 || err.code === "ER_DUP_FIELDNAME") {
