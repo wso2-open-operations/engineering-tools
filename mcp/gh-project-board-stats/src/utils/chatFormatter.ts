@@ -52,10 +52,29 @@ function sortStatusGroups(statuses: string[]): string[] {
     });
 }
 
+/**
+ * Helper to build a natural conversational summary sentence 
+ * using parsed intent arguments.
+ */
+function buildNaturalIntro(
+    boardName: string,
+    iterationLabel: string,
+    intentArgs?: { targetFunction?: string; epicSearch?: string }
+): string {
+    const targetFunc = intentArgs?.targetFunction;
+
+    if (targetFunc) {
+        return `Here are the latest updates for the **${targetFunc}** team on ${iterationLabel}:`;
+    }
+
+    return `Here's what's scheduled for **${boardName}** on ${iterationLabel}:`;
+}
+
 export function formatReleaseList(
     boardName: string,
     iterationLabel: string,
     releases: Array<{ title: string; status: string }>,
+    intentArgs?: { targetFunction?: string; epicSearch?: string },
     prefix: string = ""
 ): string {
     const seen = new Set<string>();
@@ -66,11 +85,12 @@ export function formatReleaseList(
         return true;
     });
 
-    let text = `${prefix}Here are the releases for **${boardName}** (${iterationLabel}):\n\n`;
-
     if (cleanReleases.length === 0) {
-        return `${prefix}No releases found for **${boardName}** (${iterationLabel}).`;
+        const subject = intentArgs?.targetFunction ? `for the **${intentArgs.targetFunction}** team` : `on **${boardName}**`;
+        return `${prefix}Checked ${subject} for ${iterationLabel}, but couldn't find any releases scheduled. Let me know if you want to look at another iteration or epic.`;
     }
+
+    const introHeader = `${prefix}${buildNaturalIntro(boardName, iterationLabel, intentArgs)}`;
 
     const grouped = new Map<string, string[]>();
     for (const item of cleanReleases) {
@@ -79,6 +99,8 @@ export function formatReleaseList(
     }
 
     const orderedStatuses = sortStatusGroups(Array.from(grouped.keys()));
+
+    let text = `${introHeader}\n\n`;
 
     text += orderedStatuses
         .map((status) => {
@@ -89,7 +111,9 @@ export function formatReleaseList(
         })
         .join("\n\n");
 
-    return text;
+    text += `\n\n_Want to drill into a specific epic, change iteration, or check another team?_`;
+
+    return text.trim();
 }
 
 export function formatEpicList(
@@ -99,14 +123,15 @@ export function formatEpicList(
 ): string {
     const cleanEpics = dedupeByTitle(epics);
 
-    let text = `${prefix}Here are the Epics for **${boardName}**:\n\n`;
-
     if (cleanEpics.length === 0) {
-        return `${prefix}No Epics found for **${boardName}**.`;
+        return `${prefix}No Epics found on **${boardName}**.`;
     }
 
+    let text = `${prefix}Here are the active Epics on **${boardName}**:\n\n`;
     text += cleanEpics.map((e) => `* **${e.title}**`).join("\n");
-    return text;
+    text += `\n\n_Let me know if you want to inspect items under any of these Epics._`;
+
+    return text.trim();
 }
 
 export function formatEpicSearchResults(
@@ -117,14 +142,15 @@ export function formatEpicSearchResults(
 ): string {
     const cleanItems = dedupeByTitle(items);
 
-    let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
-
     if (cleanItems.length === 0) {
-        return `${prefix}No matches found for **"${searchTerm}"** on **${boardName}**.`;
+        return `${prefix}No items matched **"${searchTerm}"** on **${boardName}**.`;
     }
 
+    let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
     text += cleanItems.map((i) => `* **${i.title}**`).join("\n");
-    return text;
+    text += `\n\n_Need details on any of these items?_`;
+
+    return text.trim();
 }
 
 export function formatMultiBoardReleases(
