@@ -17,7 +17,6 @@
 /*
 * This file contains utility functions for formatting chat messages in Markdown format
  */
-
 interface MultiBoardResult {
     boardName: string;
     releases?: string[];
@@ -25,19 +24,71 @@ interface MultiBoardResult {
     error?: string | null;
 }
 
+function dedupeByTitle<T extends { title: string } | string>(items: T[]): T[] {
+    const seen = new Set<string>();
+    const result: T[] = [];
+
+    for (const item of items) {
+        const title = typeof item === "string" ? item : item.title;
+        const key = title.trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push(item);
+    }
+
+    return result;
+}
+
+const STATUS_DISPLAY_ORDER = ["Done", "Testing/UAT", "In Progress", "Todo", "Backlog"];
+
+function sortStatusGroups(statuses: string[]): string[] {
+    return [...statuses].sort((a, b) => {
+        const ai = STATUS_DISPLAY_ORDER.indexOf(a);
+        const bi = STATUS_DISPLAY_ORDER.indexOf(b);
+        if (ai === -1 && bi === -1) return a.localeCompare(b);
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    });
+}
+
 export function formatReleaseList(
     boardName: string,
     iterationLabel: string,
-    releases: string[],
+    releases: Array<{ title: string; status: string }>,
     prefix: string = ""
 ): string {
+    const seen = new Set<string>();
+    const cleanReleases = releases.filter((r) => {
+        const key = r.title.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
     let text = `${prefix}Here are the releases for **${boardName}** (${iterationLabel}):\n\n`;
 
-    if (releases.length === 0) {
+    if (cleanReleases.length === 0) {
         return `${prefix}No releases found for **${boardName}** (${iterationLabel}).`;
     }
 
-    text += releases.map((title) => `* **${title}**`).join("\n");
+    const grouped = new Map<string, string[]>();
+    for (const item of cleanReleases) {
+        if (!grouped.has(item.status)) grouped.set(item.status, []);
+        grouped.get(item.status)!.push(item.title);
+    }
+
+    const orderedStatuses = sortStatusGroups(Array.from(grouped.keys()));
+
+    text += orderedStatuses
+        .map((status) => {
+            const titles = grouped.get(status)!;
+            const header = `**${status}** (${titles.length})`;
+            const list = titles.map((t) => `* ${t}`).join("\n");
+            return `${header}\n${list}`;
+        })
+        .join("\n\n");
+
     return text;
 }
 
@@ -46,13 +97,15 @@ export function formatEpicList(
     epics: Array<{ title: string; epicLabel: string | null }>,
     prefix: string = ""
 ): string {
+    const cleanEpics = dedupeByTitle(epics);
+
     let text = `${prefix}Here are the Epics for **${boardName}**:\n\n`;
 
-    if (epics.length === 0) {
+    if (cleanEpics.length === 0) {
         return `${prefix}No Epics found for **${boardName}**.`;
     }
 
-    text += epics.map((e) => `* **${e.title}**`).join("\n");
+    text += cleanEpics.map((e) => `* **${e.title}**`).join("\n");
     return text;
 }
 
@@ -62,13 +115,15 @@ export function formatEpicSearchResults(
     items: Array<{ title: string; epicLabel: string | null }>,
     prefix: string = ""
 ): string {
+    const cleanItems = dedupeByTitle(items);
+
     let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
 
-    if (items.length === 0) {
+    if (cleanItems.length === 0) {
         return `${prefix}No matches found for **"${searchTerm}"** on **${boardName}**.`;
     }
 
-    text += items.map((i) => `* **${i.title}**`).join("\n");
+    text += cleanItems.map((i) => `* **${i.title}**`).join("\n");
     return text;
 }
 
@@ -86,8 +141,9 @@ export function formatMultiBoardReleases(
             continue;
         }
 
-        if (b.releases && b.releases.length > 0) {
-            text += b.releases.map((r) => `* **${r}**`).join("\n") + "\n\n";
+        const releases = dedupeByTitle(b.releases || []);
+        if (releases.length > 0) {
+            text += releases.map((r) => `* **${r}**`).join("\n") + "\n\n";
         } else {
             text += "* _No releases found._\n\n";
         }
@@ -109,8 +165,9 @@ export function formatMultiBoardEpicList(
             continue;
         }
 
-        if (b.items && b.items.length > 0) {
-            text += b.items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
+        const items = dedupeByTitle(b.items || []);
+        if (items.length > 0) {
+            text += items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
         } else {
             text += "* _No Epics found._\n\n";
         }
@@ -133,8 +190,9 @@ export function formatMultiBoardEpicSearchResults(
             continue;
         }
 
-        if (b.items && b.items.length > 0) {
-            text += b.items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
+        const items = dedupeByTitle(b.items || []);
+        if (items.length > 0) {
+            text += items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
         } else {
             text += `* _No matches for "${searchTerm}"._\n\n`;
         }
