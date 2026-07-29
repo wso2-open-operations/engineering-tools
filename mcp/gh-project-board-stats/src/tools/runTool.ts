@@ -117,7 +117,7 @@ export async function runTool(
     }
 
     const PER_PAGE = 100;
-    const MAX_ROUNDS = 20; // Safety limit to prevent infinite loops in case of unexpected pagination behavior
+    const MAX_ROUNDS = 20;
 
     let afterCursor: string | undefined = undefined;
     let round = 0;
@@ -154,20 +154,26 @@ export async function runTool(
 
         round++;
 
-        const hasNextPage: boolean = parsed.pageInfo?.hasNextPage === true;
-        const nextCursor: string | null = parsed.pageInfo?.nextCursor ?? null;
+        const nextCursor: string | null =
+            parsed.pageInfo?.nextCursor ??
+            parsed.nextCursor ??
+            null;
+
+        const hasNextPage: boolean =
+            parsed.pageInfo?.hasNextPage ??
+            Boolean(nextCursor);
 
         if (items.length === 0 || !hasNextPage || !nextCursor || nextCursor === afterCursor) {
             break;
         }
 
         afterCursor = nextCursor;
+    }
 
-        if (round >= MAX_ROUNDS) {
-            console.warn(
-                `Reached maximum safety pagination limit of ${MAX_ROUNDS} rounds; results may be incomplete.`
-            );
-        }
+    if (round >= MAX_ROUNDS) {
+        console.warn(
+            `Reached maximum safety pagination limit of ${MAX_ROUNDS} rounds (${allItems.length} items fetched); results may be incomplete.`
+        );
     }
 
     // filtering logic based on route arguments

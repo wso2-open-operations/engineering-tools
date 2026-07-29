@@ -118,9 +118,9 @@ export async function initializeDatabase(): Promise<void> {
         `);
 
     console.log("Database structural tables checked/initialized.");
-  }
 
-  await runColumnMigrations(dbPool);
+    await runColumnMigrations(dbPool);
+  }
 
   console.log(`Database pool initialized successfully for database: ${dbConfig.database}`);
 }

@@ -396,11 +396,20 @@ async function main() {
 
                 await setActiveBoard(targetBoardName, targetProjectId);
 
-                return res.json({
-                    type: "board_acknowledgment",
-                    text: `Got it, we're on **${targetBoardName}**. What's on your mind? Ask away—whether it's upcoming releases, specific epics, or feature statuses.`,
-                    boardName: targetBoardName
-                });
+                const hasQueryArgs = Boolean(
+                    intent.args?.iteration ||
+                    intent.args?.function ||
+                    intent.args?.epicSearch ||
+                    intent.args?.listEpics
+                );
+
+                if (!hasQueryArgs) {
+                    return res.json({
+                        type: "board_acknowledgment",
+                        text: `Got it, we're on **${targetBoardName}**. What's on your mind? Ask away—whether it's upcoming releases, specific epics, or feature statuses.`,
+                        boardName: targetBoardName
+                    });
+                }
 
             } else if (activeBoardName && activeProjectId) {
                 targetBoardName = activeBoardName;
