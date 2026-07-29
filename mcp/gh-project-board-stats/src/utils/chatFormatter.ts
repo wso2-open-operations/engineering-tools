@@ -39,15 +39,31 @@ function dedupeByTitle<T extends { title: string } | string>(items: T[]): T[] {
     return result;
 }
 
-const STATUS_DISPLAY_ORDER = ["Done", "Testing/UAT", "In Progress", "Todo", "Backlog"];
+const STATUS_DISPLAY_ORDER = [
+    "done",
+    "testing/uat",
+    "in progress",
+    "todo",
+    "backlog"
+];
+
+function getStatusRank(status: string): number {
+    return STATUS_DISPLAY_ORDER.indexOf(status.trim().toLowerCase());
+}
 
 function sortStatusGroups(statuses: string[]): string[] {
     return [...statuses].sort((a, b) => {
-        const ai = STATUS_DISPLAY_ORDER.indexOf(a);
-        const bi = STATUS_DISPLAY_ORDER.indexOf(b);
-        if (ai === -1 && bi === -1) return a.localeCompare(b);
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
+        const ai = getStatusRank(a);
+        const bi = getStatusRank(b);
+        if (ai === -1 && bi === -1) {
+            return a.localeCompare(b);
+        }
+        if (ai === -1) {
+            return 1;
+        }
+        if (bi === -1) {
+            return -1;
+        }
         return ai - bi;
     });
 }

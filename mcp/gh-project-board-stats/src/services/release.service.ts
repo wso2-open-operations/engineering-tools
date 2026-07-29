@@ -18,14 +18,15 @@
 import { getProjectFieldValue } from "./projectItem.service";
 
 function getLabelNames(item: any): string[] {
-    const labels = item.content?.labels ?? item.labels ?? [];
+    const raw = item?.content?.labels ?? item?.labels ?? [];
+    const labels = Array.isArray(raw) ? raw : Array.isArray(raw?.nodes) ? raw.nodes : [];
     return labels.map((label: any) =>
         typeof label === "string" ? label : label?.name ?? ""
     );
 }
 
 function getItemTitle(item: any): string {
-    return (item.content?.title ?? item.title ?? "").trim();
+    return String(item?.content?.title ?? item?.title ?? "").trim();
 }
 
 function resolveFieldDisplayValue(value: any): string {
@@ -50,7 +51,8 @@ export function belongsToFunction(item: any, functionName: string): boolean {
     if (!fieldText) return false;
 
     const target = functionName.toLowerCase().trim();
-    return fieldText === target || fieldText.includes(target) || target.includes(fieldText);
+    if (fieldText === target) return true;
+    return target.length >= 3 && fieldText.includes(target);
 }
 
 /**

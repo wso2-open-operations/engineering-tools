@@ -56,12 +56,12 @@ paths:
       parameters:
         - name: x-jwt-assertion
           in: header
-          required: false
+          required: true
           schema:
             type: string
           description: >
-            Optional when testing directly through the Choreo OpenAPI Console.
-            During normal deployment this header is injected automatically by
+            Required by the application handler; omitting this header yields a 401 Unauthorized response.
+            During normal deployment behind Choreo, this header is injected automatically by
             the gateway after successful authentication.
           example: >
             eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...

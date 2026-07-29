@@ -16,7 +16,7 @@
 
 import { getIterationValue, isMatchingIteration, resolveIterationTargetTitle } from "../services/iteration.service";
 import { getFieldId } from "../services/projectField.service";
-import { isRelease, belongsToFunction, isEpicTypeItem, matchesEpicSearch, getEpicLabelText } from "../services/release.service";
+import { isRelease, belongsToFunction, isEpicTypeItem, matchesEpicSearch, getEpicLabelText, getItemStatusText } from "../services/release.service";
 import { dbPool } from "../database/mysql";
 
 interface RuntimeTarget {
@@ -66,7 +66,7 @@ export async function runTool(
             : "ITERATION_BASED";
 
     const releaseColumn =
-        metaRows.length > 0
+        metaRows.length > 0 && metaRows[0].release_column_name
             ? metaRows[0].release_column_name
             : "Done";
 
@@ -107,7 +107,13 @@ export async function runTool(
     const seenItemKeys = new Set<string>();
 
     function itemKey(item: any): string {
-        return String(item.id ?? item.content?.id ?? item.content?.title ?? item.title ?? "");
+        const rawKey =
+            item.id ??
+            item.content?.id ??
+            item.content?.url ??
+            (item.content?.number !== undefined ? String(item.content.number) : undefined);
+
+        return rawKey ? String(rawKey) : "";
     }
 
     const PER_PAGE = 100;
@@ -138,14 +144,12 @@ export async function runTool(
         const parsed = safeJsonParse(rawText);
 
         const items = parsed.items ?? [];
-        let newItemsThisRound = 0;
 
         for (const item of items) {
             const key = itemKey(item);
             if (!key || seenItemKeys.has(key)) continue;
             seenItemKeys.add(key);
             allItems.push(item);
-            newItemsThisRound++;
         }
 
         round++;
@@ -153,14 +157,17 @@ export async function runTool(
         const hasNextPage: boolean = parsed.pageInfo?.hasNextPage === true;
         const nextCursor: string | null = parsed.pageInfo?.nextCursor ?? null;
 
-        if (newItemsThisRound === 0 || !hasNextPage || !nextCursor) {
-            if (round >= MAX_ROUNDS) {
-                console.warn(`Reached maximum safety pagination limit of ${MAX_ROUNDS} rounds. Halting.`);
-            }
+        if (items.length === 0 || !hasNextPage || !nextCursor || nextCursor === afterCursor) {
             break;
         }
 
         afterCursor = nextCursor;
+
+        if (round >= MAX_ROUNDS) {
+            console.warn(
+                `Reached maximum safety pagination limit of ${MAX_ROUNDS} rounds; results may be incomplete.`
+            );
+        }
     }
 
     // filtering logic based on route arguments
@@ -183,11 +190,7 @@ export async function runTool(
 
     function matchesTimeOrStatusFilter(item: any): boolean {
         if (layoutType !== "ITERATION_BASED") {
-            const status =
-                item.fields?.find((f: any) => f.name?.toLowerCase() === "status")?.value;
-            const statusText =
-                status && typeof status === "object" ? (status.name ?? "") : (status ?? "");
-            return String(statusText).toLowerCase() === releaseColumn.toLowerCase();
+            return getItemStatusText(item).toLowerCase() === releaseColumn.toLowerCase();
         }
 
         if (!requestedIteration) return true;

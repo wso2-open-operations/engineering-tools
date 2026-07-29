@@ -165,7 +165,13 @@ function dedupeResultItems(results: any[]): any[] {
     const seen = new Set<string>();
     const out: any[] = [];
     for (const item of results) {
-        const key = String(item.id ?? item.content?.id ?? item.content?.title ?? item.title ?? "");
+        const rawKey =
+            item.id ??
+            item.content?.id ??
+            item.content?.url ??
+            (item.content?.number !== undefined ? String(item.content.number) : undefined);
+
+        const key = rawKey ? String(rawKey) : "";
         if (!key || seen.has(key)) continue;
         seen.add(key);
         out.push(item);

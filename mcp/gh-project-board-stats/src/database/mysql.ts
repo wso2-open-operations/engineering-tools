@@ -32,20 +32,26 @@ async function runColumnMigrations(pool: mysql.Pool): Promise<void> {
     "ALTER TABLE ghs_user_session_state ADD COLUMN pending_epic_search VARCHAR(150) NULL",
     "ALTER TABLE ghs_user_session_state ADD COLUMN pending_list_epics TINYINT(1) DEFAULT 0",
 
-    // User project preferences last accessed timestamp
-    "ALTER TABLE ghs_user_project_preferences ADD COLUMN last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+    "ALTER TABLE ghs_user_project_preferences ADD COLUMN last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+    "ALTER TABLE ghs_user_session_state MODIFY COLUMN current_state VARCHAR(50) NOT NULL DEFAULT 'IDLE'",
+    "ALTER TABLE ghs_user_project_preferences MODIFY COLUMN is_remembered TINYINT(1) DEFAULT 1",
+    "ALTER TABLE ghs_users MODIFY COLUMN encrypted_access_token TEXT NULL"
   ];
 
   for (const statement of migrations) {
     try {
       await pool.execute(statement);
     } catch (err: any) {
-      if (err.errno === 1146 || err.code === 'ER_NO_SUCH_TABLE') {
+      if (err.errno === 1146 || err.code === "ER_NO_SUCH_TABLE") {
         continue;
       }
-      if (err.errno === 1060 || err.code === 'ER_DUP_FIELDNAME') {
+
+      if (err.errno === 1060 || err.code === "ER_DUP_FIELDNAME") {
         continue;
       }
+
+      console.error(`Column migration failed: ${statement}`, err);
+      throw err;
     }
   }
 }
