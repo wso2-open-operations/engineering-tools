@@ -17,16 +17,13 @@
 export function getFieldId(
     projectFields: any[],
     fieldName: string
-): string {
+): string | null {
+    if (!Array.isArray(projectFields)) return null;
 
+    const target = fieldName.toLowerCase().trim();
     const field = projectFields.find(
-        (f: any) =>
-            f.name.toLowerCase() === fieldName.toLowerCase()
+        (f: any) => f?.name?.toLowerCase()?.trim() === target
     );
 
-    if (!field) {
-        throw new Error(`Field '${fieldName}' not found.`);
-    }
-
-    return String(field.id);
-}
+    return field ? String(field.id) : null;
+} 
