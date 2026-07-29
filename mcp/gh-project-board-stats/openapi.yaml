@@ -4,8 +4,11 @@ info:
   title: GitHub Project Board Stats API
   version: 1.0.0
   description: >
-    Backend service for querying GitHub Project board statistics through the GitHub MCP integration.
-    All endpoints except /health require a valid JWT via the x-jwt-assertion header injected by the Choreo gateway.
+    Backend service for querying GitHub Project boards through the GitHub MCP integration.
+    Natural language queries are resolved into project board operations such as
+    release tracking, epic discovery, and board selection.
+    All endpoints except /health require a valid JWT supplied via the
+    x-jwt-assertion header by the Choreo gateway.
 
 servers:
   - url: /
@@ -16,7 +19,9 @@ components:
       type: apiKey
       in: header
       name: x-jwt-assertion
-      description: Signed gateway JWT assertion containing user identity claims (email and github_id).
+      description: >
+        JWT issued by the authentication gateway containing the authenticated
+        user's GitHub identity and email claims.
 
 security:
   - jwtAssertion: []
@@ -25,14 +30,42 @@ paths:
   /health:
     get:
       summary: Health check
-      security: [] 
+      description: Returns the service health status.
+      security: []
       responses:
         '200':
-          description: Service is healthy and online.
+          description: Service is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    example: UP
 
   /query:
     post:
-      summary: Query GitHub project releases
+      summary: Query GitHub Project Boards
+      description: >
+        Accepts a natural language question and returns release information,
+        epic information, board-selection prompts, or board acknowledgements.
+
+      parameters:
+        - name: x-jwt-assertion
+          in: header
+          required: true
+          schema:
+            type: string
+          description: >
+            Required by the application handler; omitting this header yields a 401 Unauthorized response.
+            During normal deployment behind Choreo, this header is injected automatically by
+            the gateway after successful authentication.
+          example: >
+            eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
       requestBody:
         required: true
         content:
@@ -45,17 +78,140 @@ paths:
                 question:
                   type: string
                   minLength: 1
-                  pattern: '.*\S.*'
-                  description: The query question to ask the AI agent about project releases.
-                  example: "What were the releases from previous week?"
+                  description: Natural language query.
+                  example: What releases are planned for next week's iteration?
+
       responses:
         '200':
-          description: Successful query resolution returning the iteration details and active release lists.
+          description: Query processed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - type
+                  - text
+                properties:
+                  type:
+                    type: string
+                    description: Type of response returned.
+                    enum:
+                      - board_selection
+                      - board_acknowledgment
+                      - release_list
+                      - epic_list
+                      - epic_search_results
+
+                  text:
+                    type: string
+                    description: Human-readable response.
+
+                  boardName:
+                    type: string
+                    description: Active project board.
+
+                  availableBoards:
+                    type: array
+                    description: Returned when multiple matching boards are found.
+                    items:
+                      type: string
+
+                  iteration:
+                    type: string
+                    description: Requested iteration window.
+                    enum:
+                      - previous_week
+                      - this_week
+                      - next_week
+
+                  releases:
+                    type: array
+                    description: Matching release titles.
+                    items:
+                      type: string
+
+                  releasesByStatus:
+                    type: object
+                    description: Releases grouped by project status.
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
+
+                  epics:
+                    type: array
+                    description: Returned for epic_list responses.
+                    items:
+                      type: object
+                      properties:
+                        title:
+                          type: string
+                        epicLabel:
+                          type: string
+                          nullable: true
+
+                  searchTerm:
+                    type: string
+                    description: Returned for epic search responses.
+
+                  items:
+                    type: array
+                    description: Matching epic search results.
+                    items:
+                      type: object
+                      properties:
+                        title:
+                          type: string
+                        epicLabel:
+                          type: string
+                          nullable: true
+
         '400':
-          description: Invalid request payload or blank query.
+          description: Invalid request or empty question.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
         '401':
-          description: Missing or invalid identity verification headers or token context.
-        '504':
-          description: Target operations or internal GitHub MCP queries timed out (30s limit).
+          description: Missing or invalid JWT assertion.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+        '409':
+          description: Email already linked to another GitHub identity.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
         '500':
-          description: Internal server database or operational pipeline error.
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+        '504':
+          description: GitHub MCP request timed out.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string

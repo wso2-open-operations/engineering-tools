@@ -17,7 +17,6 @@
 /*
 * This file contains utility functions for formatting chat messages in Markdown format
  */
-
 interface MultiBoardResult {
     boardName: string;
     releases?: string[];
@@ -25,20 +24,112 @@ interface MultiBoardResult {
     error?: string | null;
 }
 
+function dedupeByTitle<T extends { title: string } | string>(items: T[]): T[] {
+    const seen = new Set<string>();
+    const result: T[] = [];
+
+    for (const item of items) {
+        const title = typeof item === "string" ? item : item.title;
+        const key = title.trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push(item);
+    }
+
+    return result;
+}
+
+const STATUS_DISPLAY_ORDER = [
+    "done",
+    "testing/uat",
+    "in progress",
+    "todo",
+    "backlog"
+];
+
+function getStatusRank(status: string): number {
+    return STATUS_DISPLAY_ORDER.indexOf(status.trim().toLowerCase());
+}
+
+function sortStatusGroups(statuses: string[]): string[] {
+    return [...statuses].sort((a, b) => {
+        const ai = getStatusRank(a);
+        const bi = getStatusRank(b);
+        if (ai === -1 && bi === -1) {
+            return a.localeCompare(b);
+        }
+        if (ai === -1) {
+            return 1;
+        }
+        if (bi === -1) {
+            return -1;
+        }
+        return ai - bi;
+    });
+}
+
+/**
+ * Helper to build a natural conversational summary sentence 
+ * using parsed intent arguments.
+ */
+function buildNaturalIntro(
+    boardName: string,
+    iterationLabel: string,
+    intentArgs?: { targetFunction?: string; epicSearch?: string }
+): string {
+    const targetFunc = intentArgs?.targetFunction;
+
+    if (targetFunc) {
+        return `Here are the latest updates for the **${targetFunc}** team on ${iterationLabel}:`;
+    }
+
+    return `Here's what's scheduled for **${boardName}** on ${iterationLabel}:`;
+}
+
 export function formatReleaseList(
     boardName: string,
     iterationLabel: string,
-    releases: string[],
+    releases: Array<{ title: string; status: string }>,
+    intentArgs?: { targetFunction?: string; epicSearch?: string },
     prefix: string = ""
 ): string {
-    let text = `${prefix}Here are the releases for **${boardName}** (${iterationLabel}):\n\n`;
+    const seen = new Set<string>();
+    const cleanReleases = releases.filter((r) => {
+        const key = r.title.trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 
-    if (releases.length === 0) {
-        return `${prefix}No releases found for **${boardName}** (${iterationLabel}).`;
+    if (cleanReleases.length === 0) {
+        const subject = intentArgs?.targetFunction ? `for the **${intentArgs.targetFunction}** team` : `on **${boardName}**`;
+        return `${prefix}Checked ${subject} for ${iterationLabel}, but couldn't find any releases scheduled. Let me know if you want to look at another iteration or epic.`;
     }
 
-    text += releases.map((title) => `* **${title}**`).join("\n");
-    return text;
+    const introHeader = `${prefix}${buildNaturalIntro(boardName, iterationLabel, intentArgs)}`;
+
+    const grouped = new Map<string, string[]>();
+    for (const item of cleanReleases) {
+        if (!grouped.has(item.status)) grouped.set(item.status, []);
+        grouped.get(item.status)!.push(item.title);
+    }
+
+    const orderedStatuses = sortStatusGroups(Array.from(grouped.keys()));
+
+    let text = `${introHeader}\n\n`;
+
+    text += orderedStatuses
+        .map((status) => {
+            const titles = grouped.get(status)!;
+            const header = `**${status}** (${titles.length})`;
+            const list = titles.map((t) => `* ${t}`).join("\n");
+            return `${header}\n${list}`;
+        })
+        .join("\n\n");
+
+    text += `\n\n_Want to drill into a specific epic, change iteration, or check another team?_`;
+
+    return text.trim();
 }
 
 export function formatEpicList(
@@ -46,14 +137,17 @@ export function formatEpicList(
     epics: Array<{ title: string; epicLabel: string | null }>,
     prefix: string = ""
 ): string {
-    let text = `${prefix}Here are the Epics for **${boardName}**:\n\n`;
+    const cleanEpics = dedupeByTitle(epics);
 
-    if (epics.length === 0) {
-        return `${prefix}No Epics found for **${boardName}**.`;
+    if (cleanEpics.length === 0) {
+        return `${prefix}No Epics found on **${boardName}**.`;
     }
 
-    text += epics.map((e) => `* **${e.title}**`).join("\n");
-    return text;
+    let text = `${prefix}Here are the active Epics on **${boardName}**:\n\n`;
+    text += cleanEpics.map((e) => `* **${e.title}**`).join("\n");
+    text += `\n\n_Let me know if you want to inspect items under any of these Epics._`;
+
+    return text.trim();
 }
 
 export function formatEpicSearchResults(
@@ -62,14 +156,17 @@ export function formatEpicSearchResults(
     items: Array<{ title: string; epicLabel: string | null }>,
     prefix: string = ""
 ): string {
-    let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
+    const cleanItems = dedupeByTitle(items);
 
-    if (items.length === 0) {
-        return `${prefix}No matches found for **"${searchTerm}"** on **${boardName}**.`;
+    if (cleanItems.length === 0) {
+        return `${prefix}No items matched **"${searchTerm}"** on **${boardName}**.`;
     }
 
-    text += items.map((i) => `* **${i.title}**`).join("\n");
-    return text;
+    let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
+    text += cleanItems.map((i) => `* **${i.title}**`).join("\n");
+    text += `\n\n_Need details on any of these items?_`;
+
+    return text.trim();
 }
 
 export function formatMultiBoardReleases(
@@ -86,8 +183,9 @@ export function formatMultiBoardReleases(
             continue;
         }
 
-        if (b.releases && b.releases.length > 0) {
-            text += b.releases.map((r) => `* **${r}**`).join("\n") + "\n\n";
+        const releases = dedupeByTitle(b.releases || []);
+        if (releases.length > 0) {
+            text += releases.map((r) => `* **${r}**`).join("\n") + "\n\n";
         } else {
             text += "* _No releases found._\n\n";
         }
@@ -109,8 +207,9 @@ export function formatMultiBoardEpicList(
             continue;
         }
 
-        if (b.items && b.items.length > 0) {
-            text += b.items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
+        const items = dedupeByTitle(b.items || []);
+        if (items.length > 0) {
+            text += items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
         } else {
             text += "* _No Epics found._\n\n";
         }
@@ -133,8 +232,9 @@ export function formatMultiBoardEpicSearchResults(
             continue;
         }
 
-        if (b.items && b.items.length > 0) {
-            text += b.items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
+        const items = dedupeByTitle(b.items || []);
+        if (items.length > 0) {
+            text += items.map((i) => `* **${i.title}**`).join("\n") + "\n\n";
         } else {
             text += `* _No matches for "${searchTerm}"._\n\n`;
         }
