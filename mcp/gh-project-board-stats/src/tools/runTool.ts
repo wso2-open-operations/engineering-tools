@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { getIterationValue, isMatchingIteration } from "../services/iteration.service";
+import { getIterationValue, isMatchingIteration, resolveIterationTargetTitle } from "../services/iteration.service";
 import { getFieldId } from "../services/projectField.service";
 import { isRelease, belongsToFunction, isEpicTypeItem, matchesEpicSearch, getEpicLabelText } from "../services/release.service";
 import { dbPool } from "../database/mysql";
@@ -23,6 +23,8 @@ interface RuntimeTarget {
     owner: string;
     projectNumber: number;
 }
+
+const STANDARD_ITERATION_KEYS = new Set(["this_week", "next_week", "previous_week"]);
 
 function getMcpResponseText(result: any): string {
     if (!result?.content || !Array.isArray(result.content)) {
@@ -43,27 +45,6 @@ function safeJsonParse(text: string): any {
     }
 
     return JSON.parse(trimmed);
-}
-
-function matchesLayoutFilter(
-    item: any,
-    layoutType: string,
-    releaseColumn: string,
-    requestedIteration?: string
-): boolean {
-    if (layoutType === "ITERATION_BASED") {
-
-        if (!requestedIteration) return true;
-        const iteration = getIterationValue(item);
-        return isMatchingIteration(iteration, requestedIteration);
-    }
-
-    const status =
-        item.fields?.find(
-            (f: any) => f.name?.toLowerCase() === "status"
-        )?.value ?? "";
-
-    return String(status).toLowerCase() === releaseColumn.toLowerCase();
 }
 
 export async function runTool(
@@ -105,9 +86,6 @@ export async function runTool(
     if (layoutType === "ITERATION_BASED") {
         const id = getFieldId(fields.fields, "Iteration");
         if (id) fieldIds.push(id);
-    } else {
-        const id = getFieldId(fields.fields, "Status");
-        if (id) fieldIds.push(id);
     }
 
     if (route?.args?.function) {
@@ -115,21 +93,32 @@ export async function runTool(
         if (id) fieldIds.push(id);
     }
 
+    const typeFieldId = getFieldId(fields.fields, "Type");
+    if (typeFieldId && !fieldIds.includes(typeFieldId)) {
+        fieldIds.push(typeFieldId);
+    }
+
+    const statusFieldId = getFieldId(fields.fields, "Status");
+    if (statusFieldId && !fieldIds.includes(statusFieldId)) {
+        fieldIds.push(statusFieldId);
+    }
+
     const allItems: any[] = [];
+    const seenItemKeys = new Set<string>();
 
-    let page = 1;
-    const PER_PAGE = 50;
-    const MAX_PAGES = 10;
-    let hasNextPage = true;
+    function itemKey(item: any): string {
+        return String(item.id ?? item.content?.id ?? item.content?.title ?? item.title ?? "");
+    }
 
-    while (hasNextPage) {
+    const PER_PAGE = 100;
+    const MAX_ROUNDS = 20; // Safety limit to prevent infinite loops in case of unexpected pagination behavior
+
+    let afterCursor: string | undefined = undefined;
+    let round = 0;
+
+    while (round < MAX_ROUNDS) {
         if (signal?.aborted) {
             console.warn("Operation aborted by signal.");
-            break;
-        }
-
-        if (page > MAX_PAGES) {
-            console.warn(`Reached maximum safety pagination limit of ${MAX_PAGES} pages. Halting loop to prevent an infinite run.`);
             break;
         }
 
@@ -139,34 +128,86 @@ export async function runTool(
                 method: "list_project_items",
                 owner: target.owner,
                 project_number: target.projectNumber,
-                page,
                 per_page: PER_PAGE,
+                after: afterCursor,
                 fields: fieldIds
             }
         });
 
-        const parsed = safeJsonParse(getMcpResponseText(itemsResult));
+        const rawText = getMcpResponseText(itemsResult);
+        const parsed = safeJsonParse(rawText);
+
         const items = parsed.items ?? [];
+        let newItemsThisRound = 0;
 
-        allItems.push(...items);
-
-        if (items.length < PER_PAGE) {
-            hasNextPage = false;
-        } else {
-            page++;
+        for (const item of items) {
+            const key = itemKey(item);
+            if (!key || seenItemKeys.has(key)) continue;
+            seenItemKeys.add(key);
+            allItems.push(item);
+            newItemsThisRound++;
         }
+
+        round++;
+
+        const hasNextPage: boolean = parsed.pageInfo?.hasNextPage === true;
+        const nextCursor: string | null = parsed.pageInfo?.nextCursor ?? null;
+
+        if (newItemsThisRound === 0 || !hasNextPage || !nextCursor) {
+            if (round >= MAX_ROUNDS) {
+                console.warn(`Reached maximum safety pagination limit of ${MAX_ROUNDS} rounds. Halting.`);
+            }
+            break;
+        }
+
+        afterCursor = nextCursor;
     }
 
+    // filtering logic based on route arguments
     const listEpics: boolean = route?.args?.listEpics === true;
     const epicSearch: string | null = route?.args?.epicSearch ?? null;
     const requestedFunction: string | null = route?.args?.function ?? null;
     const requestedIteration: string | undefined = route?.args?.iteration;
 
+    let iterationTargetTitle: string | null = null;
+    if (
+        layoutType === "ITERATION_BASED" &&
+        requestedIteration &&
+        STANDARD_ITERATION_KEYS.has(requestedIteration)
+    ) {
+        iterationTargetTitle = resolveIterationTargetTitle(
+            allItems,
+            requestedIteration as "this_week" | "next_week" | "previous_week"
+        );
+    }
+
+    function matchesTimeOrStatusFilter(item: any): boolean {
+        if (layoutType !== "ITERATION_BASED") {
+            const status =
+                item.fields?.find((f: any) => f.name?.toLowerCase() === "status")?.value;
+            const statusText =
+                status && typeof status === "object" ? (status.name ?? "") : (status ?? "");
+            return String(statusText).toLowerCase() === releaseColumn.toLowerCase();
+        }
+
+        if (!requestedIteration) return true;
+
+        const iterationValue = getIterationValue(item);
+
+        if (STANDARD_ITERATION_KEYS.has(requestedIteration)) {
+            if (!iterationTargetTitle) return false;
+            const title = iterationValue?.title || iterationValue?.name || "";
+            return title === iterationTargetTitle;
+        }
+
+        return isMatchingIteration(iterationValue, requestedIteration);
+    }
+
     if (listEpics) {
         return allItems.filter((item: any) => {
             if (!isEpicTypeItem(item)) return false;
             if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
-            if (!matchesLayoutFilter(item, layoutType, releaseColumn, requestedIteration)) return false;
+            if (!matchesTimeOrStatusFilter(item)) return false;
             return true;
         });
     }
@@ -176,7 +217,7 @@ export async function runTool(
             .filter((item: any) => {
                 if (!matchesEpicSearch(item, epicSearch)) return false;
                 if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
-                if (!matchesLayoutFilter(item, layoutType, releaseColumn, requestedIteration)) return false;
+                if (!matchesTimeOrStatusFilter(item)) return false;
                 return true;
             })
             .map((item: any) => ({
@@ -188,7 +229,7 @@ export async function runTool(
     return allItems.filter((item: any) => {
         if (!isRelease(item)) return false;
         if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
-        if (!matchesLayoutFilter(item, layoutType, releaseColumn, requestedIteration)) return false;
+        if (!matchesTimeOrStatusFilter(item)) return false;
         return true;
     });
 }
