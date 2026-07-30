@@ -1,6 +1,6 @@
 # GitHub Product Download Stats Dashboard — Webapp
 
-React + Vite single-page app that visualizes the GitHub product download/clone/stars
+React + Vite single-page app that visualizes the GitHub product download/package/clone/stars
 statistics served by the dashboard backend. Built with WSO2 Oxygen UI, Asgardeo auth,
 and TanStack Query, following the team's `apps/customer-portal/webapp` conventions.
 
@@ -54,6 +54,7 @@ config, and the backend independently enforces admin access on every `/admin` en
 | --------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `/`             | Overview — KPIs, 30-day trend, top products, last-synced banner             | `/stats/summary`, `/repositories`, `/stats/total`                            |
 | `/downloads`    | Downloads — cumulative + per-period (day/month), version & asset drill-down | `/stats/total`, `/stats/daily`, `/stats/versions/{id}`, `/stats/assets/{id}` |
+| `/packages`     | Packages — container package download counts & versions drill-down          | `/stats/packages/repos`, `/stats/packages/{id}`, `/stats/packages/{id}/series`, `/stats/packages/{id}/versions` |
 | `/clones`       | Clone Traffic — total vs unique                                             | `/stats/clones`                                                              |
 | `/github-stats` | GitHub Stats — stars/forks/watchers/issues over time                        | `/stats/metric`                                                              |
 | `/admin`        | Admin (gated) — manage tracked repos + sync history                         | `/admin/repositories`, CRUD, `/admin/sync/logs`                              |
@@ -73,7 +74,7 @@ src/
 ├── layouts/     AppLayout · AuthGuard · RequireAdmin · ErrorLayout
 ├── components/   side-nav-bar · header · error · empty-state · error-state · stat-card · charts
 └── features/
-    ├── stats/        api · components · pages (Overview/Downloads/Clones/GitHubStats) · types · utils · constants
+    ├── stats/        api · components · pages (Overview/Downloads/Packages/Clones/GitHubStats) · types · utils · constants
     └── repositories/ api · components · pages (Admin) · types
 ```
 

@@ -65,7 +65,13 @@ export default function KpiCards({
         iconColor="success"
         trend={<TrendIndicator pct={summary?.todayDeltaPct ?? null} />}
         tooltipText="New downloads on the latest sync day, across all products."
-        onClick={() => navigate(ROUTES.DOWNLOADS)}
+        onClick={() => {
+          if (summary?.asOfDate) {
+            navigate(
+              `${ROUTES.DOWNLOADS}?interval=day&from=${summary.asOfDate}`,
+            );
+          }
+        }}
         isLoading={isLoading}
         isError={isError}
       />

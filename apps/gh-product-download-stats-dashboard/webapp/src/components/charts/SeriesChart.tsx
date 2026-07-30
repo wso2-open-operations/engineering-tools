@@ -16,6 +16,7 @@
 
 import { Box, Skeleton } from "@wso2/oxygen-ui";
 import {
+  ChartTooltip,
   ResponsiveContainer,
   LineChart,
   Line,
@@ -33,6 +34,100 @@ import { type ChartSeries } from "@components/charts/chartTypes";
 import { formatCompact } from "@utils/format";
 
 export type { ChartSeries } from "@components/charts/chartTypes";
+
+// Derive the props type that recharts passes into a custom tooltip content
+// function — sourced entirely from the oxygen-ui re-export so we never import
+// from recharts directly.
+type TooltipContentProps = React.ComponentProps<
+  typeof ChartTooltip
+>["content"] extends React.ReactElement | infer F | null | undefined
+  ? F extends (props: infer P) => React.ReactNode
+    ? P
+    : never
+  : never;
+
+/** Custom tooltip that shows all repos sorted highest to lowest. */
+function FilteredTooltip({ active, payload, label }: TooltipContentProps) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const entries = payload as Array<{
+    value?: number | null;
+    name?: string;
+    dataKey?: string | number;
+    color?: string;
+  }>;
+
+  // Highest downloads first.
+  const sorted = [...entries].sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+
+  return (
+    <div
+      style={{
+        background: "var(--oxygen-palette-background-paper, #1e2432)",
+        border:
+          "1px solid var(--oxygen-palette-divider, rgba(255,255,255,0.12))",
+        borderRadius: 8,
+        padding: "10px 14px",
+        fontSize: 13,
+        lineHeight: "1.6",
+        maxWidth: 280,
+        boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+      }}
+    >
+      <p
+        style={{
+          margin: "0 0 6px",
+          fontWeight: 600,
+          color: "var(--oxygen-palette-text-secondary, rgba(255,255,255,0.6))",
+          fontSize: 12,
+        }}
+      >
+        {String(label ?? "")}
+      </p>
+      {sorted.map((entry) => (
+        <div
+          key={String(entry.dataKey ?? entry.name)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 2,
+          }}
+        >
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              flexShrink: 0,
+              background: entry.color ?? colorForName(entry.name ?? ""),
+            }}
+          />
+          <span
+            style={{
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: "var(--oxygen-palette-text-primary, #fff)",
+            }}
+          >
+            {entry.name}
+          </span>
+          <span
+            style={{
+              fontWeight: 600,
+              color: "var(--oxygen-palette-text-primary, #fff)",
+              marginLeft: 8,
+            }}
+          >
+            {formatCompact(entry.value ?? 0)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 interface SeriesChartProps {
   series: ChartSeries[];
@@ -73,7 +168,7 @@ function mergeSeries(
 export default function SeriesChart({
   series,
   variant = "line",
-  height = 360,
+  height = 380,
   isLoading,
   isError,
   emptyTitle = "No data for the selected range",
@@ -102,7 +197,12 @@ export default function SeriesChart({
     xAxis: { show: false },
     yAxis: { show: false },
     legend: { show: true },
-    tooltip: { show: true },
+    tooltip: {
+      show: true,
+      content: FilteredTooltip,
+      // Render the tooltip above all page elements (sticky headers, modals, etc.)
+      wrapperStyle: { zIndex: 9999 },
+    },
     // Extra vertical margin keeps the plot clear of the tooltip, which can
     // grow tall when many products (series) are shown at once.
     margin: { top: 16, right: 16, bottom: 16, left: 8 },

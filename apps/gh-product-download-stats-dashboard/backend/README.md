@@ -1,8 +1,8 @@
 # GitHub Product Download Stats Dashboard Backend
 
 Go backend service for the GitHub Product Download Stats Dashboard. It reads the
-pre-aggregated daily snapshots written by the Ballerina sync cron into the
-`github_statistics` MySQL database and serves them to the React dashboard.
+pre-aggregated daily snapshots written by the Ballerina sync cron and the Go package
+stats scraper into the `github_statistics` MySQL database and serves them to the React dashboard.
 
 ## Quick Start
 
@@ -107,6 +107,10 @@ backend/
 | `GET`  | `/api/v1/stats/versions/{repoId}/series?from=&to=&interval=` | Per-version download time series                                  |
 | `GET`  | `/api/v1/stats/assets/{repoId}?from=&to=&version=`           | Download breakdown by asset                                       |
 | `GET`  | `/api/v1/stats/compare?repos=&from=&to=`                     | Side-by-side comparison                                           |
+| `GET`  | `/api/v1/stats/packages/repos`                               | List repos that have package statistics                           |
+| `GET`  | `/api/v1/stats/packages/{repoId}?from=&to=`                  | Download breakdown by package                                     |
+| `GET`  | `/api/v1/stats/packages/{repoId}/series?from=&to=&interval=` | Per-package download time series                                  |
+| `GET`  | `/api/v1/stats/packages/{repoId}/versions?package=&from=&to=`| Download breakdown by package version                             |
 
 `from`/`to` default to the last 30 days; `repos` is an optional comma-separated
 list of tracked-repository ids. `interval` on `total`, `daily`, and `metric` is
@@ -138,6 +142,7 @@ the running per-version total.
 | `productName`   | string \| null | no       | Display/product name                                              |
 | `assetPrefixes` | string[]       | no       | Release-asset name prefixes to track (empty/omitted ⇒ all assets) |
 | `isActive`      | boolean        | no       | Whether the cron should sync it (default `true`)                  |
+| `trackPackages` | boolean        | no       | Whether the scraper should scrape packages (default `false`)      |
 
 ```json
 {
@@ -145,7 +150,8 @@ the running per-version total.
   "repoName": "product-apim",
   "productName": "WSO2 API Manager",
   "assetPrefixes": ["wso2am-"],
-  "isActive": true
+  "isActive": true,
+  "trackPackages": true
 }
 ```
 
@@ -159,10 +165,12 @@ you want to change (omitted fields are left unchanged).
 | `productName`   | string \| null | New product name                   |
 | `assetPrefixes` | string[]       | Replace the tracked asset prefixes |
 | `isActive`      | boolean        | Activate / deactivate syncing      |
+| `trackPackages` | boolean        | Activate / deactivate package scraping |
 
 ```json
 {
   "isActive": false,
+  "trackPackages": true,
   "assetPrefixes": ["wso2am-", "wso2am-analytics-"]
 }
 ```
