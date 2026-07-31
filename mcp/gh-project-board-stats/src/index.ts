@@ -153,7 +153,6 @@ async function findMatchingBoards(
 
     const target = searchTerm.toLowerCase().trim();
 
-    // Exact substring matching against organization board titles
     const matches = projects
         .filter((p: any) => typeof p.title === "string" && p.title.toLowerCase().includes(target))
         .map((p: any) => ({ number: p.number, title: p.title }));
@@ -391,7 +390,6 @@ async function main() {
 
             const intent = await routeIntent(anthropic, question, activeBoardName);
 
-            // Explicit request to switch/change boards
             if (intent.isSwitchingBoard && !intent.extractedBoardName) {
                 await clearActiveBoard();
 
@@ -453,11 +451,12 @@ async function main() {
 
                 await setActiveBoard(targetBoardName, targetProjectId);
 
+                // Explicitly check listEpics to ensure epic queries pass through
                 const hasQueryArgs = Boolean(
                     intent.args?.iteration ||
                     intent.args?.function ||
                     intent.args?.epicSearch ||
-                    intent.args?.listEpics
+                    listEpics
                 );
 
                 if (!hasQueryArgs) {

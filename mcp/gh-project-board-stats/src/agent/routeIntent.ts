@@ -128,14 +128,14 @@ Output Response Struct Evaluation Rules:
    - Check if the user input contains a partial or full board name to search for (e.g., "wso2 digital", "Platform Engineering").
    - Extract the exact search term in "extractedBoardName".
 3. Parameter Extraction Matrix:
+   - "listEpics": Set to true IF the user asks for epics, list epics, show epics, or items labeled "Type/Epic" (with or without team/function parameters like "epics for IAM", "show epics in frontend", "what are the epics").
+   - "epicSearch": Extract the target epic term when asked about items under a specific named epic/feature label (e.g. "items in User Auth epic").
+   - "function": Extract team, domain, or component parameters (e.g., "IAM", "People Operations", "Frontend", "Billing"). If missing, return null.
    - "iteration": Map natural time expressions into standard keys:
      - Current period ("this week", "current sprint", "now", "today", "active iteration") -> "this_week"
      - Next period ("next week", "upcoming sprint", "next release", "coming up") -> "next_week"
      - Past period ("last week", "previous sprint", "past iteration", "completed") -> "previous_week"
      If an explicit named sprint or month is mentioned, output that exact string verbatim. Default to "this_week".
-   - "function": Extract team or domain parameters (e.g., "IAM", "People Operations"). If missing, return null.
-   - "epicSearch": Extract the target epic term when asked about an epic or feature group.
-   - "listEpics": Set to true ONLY if asking to list Epics. Otherwise false.
 
 Provide output matching this strict schema structure:
 {
