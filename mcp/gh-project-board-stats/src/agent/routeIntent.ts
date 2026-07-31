@@ -19,6 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 export interface RoutedIntent {
   status: "READY" | "REQUIRES_BOARD_SELECTION";
   extractedBoardName: string | null;
+  isSwitchingBoard: boolean;
   args: {
     iteration: string | null;
     function: string | null;
@@ -42,13 +43,14 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
   const fallback: RoutedIntent = {
     status: "REQUIRES_BOARD_SELECTION",
     extractedBoardName: null,
+    isSwitchingBoard: false,
     args: {
       iteration: recoveredIteration,
       function: null,
       epicSearch: null,
       listEpics: false
     },
-    conversationalResponse: "I couldn't quite process that request. Which project board would you like to view?",
+    conversationalResponse: "Which project board would you like to view?",
     rawInput
   };
 
@@ -75,6 +77,9 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
 
       const typedParsed = parsed as RoutedIntent;
 
+      if (typeof typedParsed.isSwitchingBoard !== "boolean") {
+        typedParsed.isSwitchingBoard = false;
+      }
       if (!typedParsed.args.iteration && recoveredIteration) {
         typedParsed.args.iteration = recoveredIteration;
       }
@@ -117,28 +122,26 @@ Active Context Parameter:
 Return ONLY a single valid JSON object. Do not wrap code in text formatting blocks.
 
 Output Response Struct Evaluation Rules:
-1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, providing confirmation details to initialize a board, asking to see a list of Epics, or searching for items under a specific Epic/feature label.
-2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering") or if they want to SWITCH boards (e.g., "change board", "switch project", "look at another board").
+1. Target Action Logic:
+   - Check if the user is explicitly requesting to switch/change boards or list available project boards (e.g., "switch board", "change project", "select another board", "show all boards"). Set "isSwitchingBoard": true in this case.
+2. Board Discovery Analysis:
+   - Check if the user input contains a partial or full board name to search for (e.g., "wso2 digital", "Platform Engineering").
+   - Extract the exact search term in "extractedBoardName".
 3. Parameter Extraction Matrix:
    - "iteration": Map natural time expressions into standard keys:
      - Current period ("this week", "current sprint", "now", "today", "active iteration") -> "this_week"
      - Next period ("next week", "upcoming sprint", "next release", "coming up") -> "next_week"
      - Past period ("last week", "previous sprint", "past iteration", "completed") -> "previous_week"
-     If the user specifies an explicit named sprint, month, or custom interval (e.g., "Sprint 45", "July"), output that exact string verbatim. Default to "this_week".
-   - "function": Extract team or domain parameters (e.g., "IAM", "People Operations", "Frontend"). If missing, return null.
-   - "epicSearch": Extract the target epic term when the user asks about an epic or feature group.
-     Examples:
-     - "what's under epic test4" -> "test4"
-     - "show items tagged EPIC/login-v2" -> "login-v2"
-     - "breakdown of the auth feature group" -> "auth"
-     - "what features are in the billing epic?" -> "billing"
-     If not searching for a specific epic/label, return null.
-   - "listEpics": Set to true ONLY if the user is asking to list or see items that are themselves Epics (e.g., "show me all epics", "list epics", "what epics do we have"). Otherwise false.
+     If an explicit named sprint or month is mentioned, output that exact string verbatim. Default to "this_week".
+   - "function": Extract team or domain parameters (e.g., "IAM", "People Operations"). If missing, return null.
+   - "epicSearch": Extract the target epic term when asked about an epic or feature group.
+   - "listEpics": Set to true ONLY if asking to list Epics. Otherwise false.
 
 Provide output matching this strict schema structure:
 {
   "status": "READY" | "REQUIRES_BOARD_SELECTION",
   "extractedBoardName": string | null,
+  "isSwitchingBoard": boolean,
   "args": {
     "iteration": string | null,
     "function": string | null,
@@ -149,8 +152,8 @@ Provide output matching this strict schema structure:
 }
 
 Behavior States:
-- If context board parameter is "NONE" and user input doesn't mention a distinct board name, flag status as "REQUIRES_BOARD_SELECTION".
-- CRITICAL OVERRIDE: If the user explicitly asks to "switch boards", "change project", or names a completely different board than the active context board "${contextBoardName}", set status to "REQUIRES_BOARD_SELECTION" and extract the new board name if provided.
+- If context board parameter is "NONE" and user input doesn't mention a board name, set status to "REQUIRES_BOARD_SELECTION".
+- If user input asks to switch boards, set "isSwitchingBoard": true.
 `,
     messages: [{ role: "user", content: input }]
   });
