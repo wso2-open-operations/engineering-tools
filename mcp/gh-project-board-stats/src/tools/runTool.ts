@@ -216,7 +216,6 @@ export async function runTool(
         return allItems.filter((item: any) => {
             if (!isEpicTypeItem(item)) return false;
             if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
-            if (!matchesTimeOrStatusFilter(item)) return false;
             return true;
         });
     }
