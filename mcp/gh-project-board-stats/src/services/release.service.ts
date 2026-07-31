@@ -77,15 +77,32 @@ export function isRelease(item: any): boolean {
 }
 
 export function isEpicTypeItem(item: any): boolean {
-    const typeValue = getProjectFieldValue(item, "Type");
-    const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
+    if (!item) return false;
 
-    if (typeText) {
-        return typeText === "epic";
-    }
+    const labels: string[] = Array.isArray(item.labels)
+        ? item.labels
+        : Array.isArray(item.content?.labels)
+            ? item.content.labels
+            : [];
 
-    const labels = getLabelNames(item);
-    return labels.some((label) => label.trim().toLowerCase() === "type/epic");
+    const hasEpicOrFeatureLabel = labels.some((label: string) => {
+        const l = typeof label === "string" ? label : (label as any)?.name ?? "";
+        return /Type\/(Epic|New Feature)/i.test(l) || /^Feature$/i.test(l);
+    });
+
+    if (hasEpicOrFeatureLabel) return true;
+
+    const fieldValues = item.fieldValues ?? item.content?.fieldValues ?? {};
+
+    const typeValue = String(
+        fieldValues["Type"]?.name ??
+        fieldValues["Type"] ??
+        fieldValues["type"]?.name ??
+        fieldValues["type"] ??
+        ""
+    ).toLowerCase().trim();
+
+    return ["feature", "epic", "new feature"].includes(typeValue);
 }
 
 export function matchesEpicSearch(item: any, searchTerm: string): boolean {
