@@ -390,6 +390,16 @@ async function main() {
 
             const intent = await routeIntent(anthropic, question, activeBoardName);
 
+            // 1. UNSUPPORTED QUERY GUARD: Prevents executing stale board state on general/unsupported questions
+            if (intent.status === "UNSUPPORTED") {
+                return res.json({
+                    type: "unsupported_query",
+                    text: intent.conversationalResponse ||
+                        "I can help you view project board releases, epics, features, and iteration items. I don't currently support general questions or direct repository actions."
+                });
+            }
+
+            // 2. SWITCH BOARD INTENT: Handle board switching requests
             if (intent.isSwitchingBoard && !intent.extractedBoardName) {
                 await clearActiveBoard();
 
@@ -451,7 +461,6 @@ async function main() {
 
                 await setActiveBoard(targetBoardName, targetProjectId);
 
-                // Explicitly check listEpics to ensure epic queries pass through
                 const hasQueryArgs = Boolean(
                     intent.args?.iteration ||
                     intent.args?.function ||
