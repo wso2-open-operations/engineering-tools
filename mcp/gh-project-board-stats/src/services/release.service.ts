@@ -57,30 +57,12 @@ export function belongsToFunction(item: any, functionName: string): boolean {
     const target = functionName.toLowerCase().trim();
     if (fieldText === target) return true;
 
-    // Check if the target function name is a whole word in the field text
     const safeTarget = escapeRegExp(target);
     const regex = new RegExp(`\\b${safeTarget}\\b`, "i");
     return regex.test(fieldText);
 }
 
-// determine if the given item is a release, based on its "Type" field or labels.
-export function isRelease(item: any): boolean {
-    const typeValue = getProjectFieldValue(item, "Type");
-    const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
-
-    if (typeText) {
-        return typeText === "feature" || typeText === "enhancement" || typeText === "release";
-    }
-
-    const labels = getLabelNames(item);
-    return labels.some((label) => {
-        const name = label.trim().toLowerCase();
-        if (name === "type/epic" || name === "epic") return false;
-        return ["feature", "enhancement", "release"].some((keyword) => name.includes(keyword));
-    });
-}
-
-// determine if the given item is an epic, based on its "Type" field or labels.
+// Determines if the given item is an Epic, based on its "Type" field or labels.
 export function isEpicTypeItem(item: any): boolean {
     if (!item) return false;
 
@@ -95,6 +77,25 @@ export function isEpicTypeItem(item: any): boolean {
     return labels.some((label) => {
         const name = label.trim().toLowerCase();
         return name === "type/epic" || name === "epic" || /^epic\/.+/i.test(name);
+    });
+}
+
+// Determines if the given item is a Release, based on its "Type" field or labels.
+export function isRelease(item: any): boolean {
+    const typeValue = getProjectFieldValue(item, "Type");
+    const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
+
+    if (typeText) {
+        return typeText === "feature" || typeText === "enhancement" || typeText === "release";
+    }
+    if (isEpicTypeItem(item)) {
+        return false;
+    }
+
+    const labels = getLabelNames(item);
+    return labels.some((label) => {
+        const name = label.trim().toLowerCase();
+        return ["feature", "enhancement", "release"].some((keyword) => name.includes(keyword));
     });
 }
 
