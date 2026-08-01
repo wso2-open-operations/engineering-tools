@@ -17,11 +17,17 @@
 /*
 * This file contains utility functions for formatting chat messages in Markdown format
  */
-interface MultiBoardResult {
+export interface MultiBoardResult {
     boardName: string;
     releases?: string[];
     items?: Array<{ title: string; epicLabel: string | null }>;
     error?: string | null;
+}
+
+export interface FormatReleaseListOptions {
+    targetFunction?: string | null;
+    epicSearch?: string | null;
+    targetStatus?: string | null;
 }
 
 function dedupeByTitle<T extends { title: string } | string>(items: T[]): T[] {
@@ -75,12 +81,19 @@ function sortStatusGroups(statuses: string[]): string[] {
 function buildNaturalIntro(
     boardName: string,
     iterationLabel: string,
-    intentArgs?: { targetFunction?: string; epicSearch?: string }
+    intentArgs?: FormatReleaseListOptions
 ): string {
     const targetFunc = intentArgs?.targetFunction;
+    const targetStatus = intentArgs?.targetStatus;
+
+    const statusAdjective = targetStatus ? `${targetStatus} ` : "";
 
     if (targetFunc) {
-        return `Here are the latest updates for the **${targetFunc}** team on ${iterationLabel}:`;
+        return `Here are the latest ${statusAdjective}updates for the **${targetFunc}** team on ${iterationLabel}:`;
+    }
+
+    if (targetStatus) {
+        return `Here are the **${targetStatus}** items scheduled for **${boardName}** on ${iterationLabel}:`;
     }
 
     return `Here's what's scheduled for **${boardName}** on ${iterationLabel}:`;
@@ -90,7 +103,7 @@ export function formatReleaseList(
     boardName: string,
     iterationLabel: string,
     releases: Array<{ title: string; status: string }>,
-    intentArgs?: { targetFunction?: string; epicSearch?: string },
+    intentArgs?: FormatReleaseListOptions,
     prefix: string = ""
 ): string {
     const seen = new Set<string>();
@@ -102,8 +115,15 @@ export function formatReleaseList(
     });
 
     if (cleanReleases.length === 0) {
-        const subject = intentArgs?.targetFunction ? `for the **${intentArgs.targetFunction}** team` : `on **${boardName}**`;
-        return `${prefix}Checked ${subject} for ${iterationLabel}, but couldn't find any releases scheduled. Let me know if you want to look at another iteration or epic.`;
+        let subject = `on **${boardName}**`;
+        if (intentArgs?.targetFunction) {
+            subject = `for the **${intentArgs.targetFunction}** team`;
+        }
+        if (intentArgs?.targetStatus) {
+            subject += ` matching status **"${intentArgs.targetStatus}"**`;
+        }
+
+        return `${prefix}Checked ${subject} for ${iterationLabel}, but couldn't find any items. Let me know if you want to look at another iteration, status, or epic.`;
     }
 
     const introHeader = `${prefix}${buildNaturalIntro(boardName, iterationLabel, intentArgs)}`;

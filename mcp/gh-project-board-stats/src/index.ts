@@ -259,7 +259,31 @@ function buildResultsPayload(
         };
     }
 
-    const releaseItems = toReleaseItemsWithStatus(results);
+    let releaseItems = toReleaseItemsWithStatus(results);
+
+    // Filter items if a specific status was requested by the user
+    const targetStatus = intentArgs?.status?.toLowerCase().trim();
+    if (targetStatus) {
+        releaseItems = releaseItems.filter((item) => {
+            const itemStatus = item.status.toLowerCase();
+
+            if (targetStatus === "done" || targetStatus === "completed") {
+                return ["done", "completed", "complete", "finished", "shipped", "released", "closed"].some(s => itemStatus.includes(s));
+            }
+            if (targetStatus === "in_progress" || targetStatus === "wip") {
+                return ["in progress", "wip", "ongoing", "doing", "in dev", "in development"].some(s => itemStatus.includes(s));
+            }
+            if (targetStatus === "testing" || targetStatus === "qa") {
+                return ["testing", "uat", "qa", "review", "under review"].some(s => itemStatus.includes(s));
+            }
+            if (targetStatus === "todo") {
+                return ["todo", "to do", "not started", "open", "backlog"].some(s => itemStatus.includes(s));
+            }
+
+            return itemStatus.includes(targetStatus);
+        });
+    }
+
     const releases = releaseItems.map((r) => r.title);
     return {
         type: "release_list",
@@ -267,7 +291,11 @@ function buildResultsPayload(
             boardName,
             formatIterationLabel(resolvedIteration),
             releaseItems,
-            { targetFunction: intentArgs?.function, epicSearch: intentArgs?.epicSearch }
+            {
+                targetFunction: intentArgs?.function,
+                epicSearch: intentArgs?.epicSearch,
+                targetStatus: intentArgs?.status
+            }
         ),
         boardName,
         iteration: resolvedIteration,
@@ -390,7 +418,7 @@ async function main() {
 
             const intent = await routeIntent(anthropic, question, activeBoardName);
 
-            // 1. UNSUPPORTED QUERY GUARD: Prevents executing stale board state on general/unsupported questions
+            // handle unsupported queries
             if (intent.status === "UNSUPPORTED") {
                 return res.json({
                     type: "unsupported_query",
@@ -399,7 +427,7 @@ async function main() {
                 });
             }
 
-            // 2. SWITCH BOARD INTENT: Handle board switching requests
+            // Handle board switching requests
             if (intent.isSwitchingBoard && !intent.extractedBoardName) {
                 await clearActiveBoard();
 
@@ -465,6 +493,7 @@ async function main() {
                     intent.args?.iteration ||
                     intent.args?.function ||
                     intent.args?.epicSearch ||
+                    intent.args?.status ||
                     listEpics
                 );
 

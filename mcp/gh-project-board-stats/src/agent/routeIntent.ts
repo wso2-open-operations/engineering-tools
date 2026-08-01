@@ -25,6 +25,7 @@ export interface RoutedIntent {
     function: string | null;
     epicSearch: string | null;
     listEpics: boolean;
+    status: string | null;
   };
   conversationalResponse: string | null;
   rawInput?: string;
@@ -48,7 +49,8 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
       iteration: null,
       function: null,
       epicSearch: null,
-      listEpics: false
+      listEpics: false,
+      status: null
     },
     conversationalResponse: "Which project board would you like to view?",
     rawInput
@@ -92,6 +94,9 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
       if (typeof typedParsed.args.listEpics !== "boolean") {
         typedParsed.args.listEpics = false;
       }
+      if (typeof typedParsed.args.status === "undefined") {
+        typedParsed.args.status = null;
+      }
 
       return typedParsed;
     }
@@ -124,32 +129,31 @@ Capabilities Supported By This System:
 2. Filtering items by team/function/domain (e.g., "IAM", "People Operations", "Engineering").
 3. Listing epics or features (e.g., "show epics", "list features").
 4. Searching for items under a specific feature or epic name (e.g., "tasks in User Auth epic").
-5. Switching or listing available project boards.
+5. Filtering items by execution status (e.g., "what's done", "show completed items", "what is in progress").
+6. Switching or listing available project boards.
 
 Return ONLY a single valid JSON object. Do not wrap code in text formatting blocks.
 
 Classification Rules:
 1. Unsupported / Off-topic Requests:
-   - If the user asks something completely outside project board capabilities (e.g., "write python code", "what is the weather", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Set all "args" to null / false.
+   - If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Set all "args" to null / false.
 2. Board Switch Request:
    - If user asks to change or list boards, set "isSwitchingBoard": true.
 3. Project Board Query:
    - If user input relates to project board items, epics, features, releases, or iterations, set status to "READY" (or "REQUIRES_BOARD_SELECTION" if no active board is selected and no board name is given).
 
 Parameter Extraction Matrix (for "READY" queries):
-- General principle: the person asking may phrase things in any way — different words, casual or formal tone, typos, indirect phrasing. Always classify by the underlying MEANING of what they're asking for, never by matching against specific example wording. The examples throughout this prompt are illustrations of a rule, not an exhaustive list of recognized phrases — generalize the rule itself to any input with equivalent meaning.
-- "listEpics": In this system, "Epics" and "Features/Releases" are DIFFERENT, OPPOSING item types — an Epic is a grouping container; a Feature/Release is a regular shippable item that may belong under one.
-  - Set true ONLY when the user explicitly wants to see items that ARE Epics themselves: "show me the epics", "what epics do we have", "list epics", "epic list", "items labeled Type/Epic".
-  - The word "feature(s)" on its own means the OPPOSITE — it refers to regular release items, NOT epics. Do not set listEpics true just because "feature" appears in the sentence.
-  - If the user explicitly contrasts the two — e.g., "features not epics", "features, not the epics", "show features instead of epics" — this is an unambiguous override: listEpics MUST be false, no matter what other words appear.
-  - When genuinely ambiguous, default to false (features/releases is the default query type; epics are the explicit, opt-in case).
-  - Worked examples:
-    - "give me this week's features on People Operations" -> listEpics: false, function: "People Operations", iteration: "this_week"
-    - "i want features not the epics" -> listEpics: false
-    - "show me all epics" -> listEpics: true
-    - "what epics do we have in Engineering" -> listEpics: true, function: "Engineering"
+- General principle: the person asking may phrase things in any way — different words, casual or formal tone, typos, indirect phrasing. Always classify by the underlying MEANING of what they're asking for, never by matching against specific example wording.
+- "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if the user explicitly asks for items in a specific state. Otherwise set to null.
+  - "done": "completed", "done", "finished", "shipped", "released", "closed"
+  - "in_progress": "in progress", "wip", "ongoing", "doing", "currently being worked on", "in development"
+  - "testing": "in qa", "testing", "under review", "uat", "review"
+  - "todo": "to do", "not started", "open", "backlog", "planned"
+- "listEpics": In this system, "Epics" and "Features/Releases" are DIFFERENT, OPPOSING item types.
+  - Set true ONLY when the user explicitly wants to see items that ARE Epics themselves.
+  - Default to false for regular features/releases.
 - "epicSearch": Target feature/epic name string if searching within a specific epic. Otherwise null.
-- "function": Team, domain, or component parameter (e.g., "IAM", "Frontend"). Otherwise null.
+- "function": Team, domain, or component parameter (e.g., "IAM", "People Operations"). Otherwise null.
 - "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified. ONLY populate if user input relates to a timeframe or iteration query. Do NOT default to "this_week" for general questions.
 
 Strict Output Schema:
@@ -161,7 +165,8 @@ Strict Output Schema:
     "iteration": string | null,
     "function": string | null,
     "epicSearch": string | null,
-    "listEpics": boolean
+    "listEpics": boolean,
+    "status": string | null
   },
   "conversationalResponse": string | null
 }
