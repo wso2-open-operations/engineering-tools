@@ -56,7 +56,7 @@ export function belongsToFunction(item: any, functionName: string): boolean {
 }
 
 /**
- * Determines if the given item is a release, based on its "Type" field or labels.
+ * Determines if the given item is a release/feature, based on its "Type" field or labels.
  * @param item - The project item to check.
  * @returns True if the item is a release, false otherwise.
  */
@@ -71,38 +71,27 @@ export function isRelease(item: any): boolean {
     const labels = getLabelNames(item);
     return labels.some((label) => {
         const name = label.trim().toLowerCase();
-        if (name === "type/epic") return false;
+        if (name === "type/epic" || name === "epic") return false;
         return ["feature", "enhancement", "release"].some((keyword) => name.includes(keyword));
     });
 }
 
+// determine if the given item is an epic, based on its "Type" field or labels.
 export function isEpicTypeItem(item: any): boolean {
     if (!item) return false;
 
-    const labels: string[] = Array.isArray(item.labels)
-        ? item.labels
-        : Array.isArray(item.content?.labels)
-            ? item.content.labels
-            : [];
+    const typeValue = getProjectFieldValue(item, "Type");
+    const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
 
-    const hasEpicOrFeatureLabel = labels.some((label: string) => {
-        const l = typeof label === "string" ? label : (label as any)?.name ?? "";
-        return /Type\/(Epic|New Feature)/i.test(l) || /^Feature$/i.test(l);
+    if (typeText) {
+        return typeText === "epic";
+    }
+
+    const labels = getLabelNames(item);
+    return labels.some((label) => {
+        const name = label.trim().toLowerCase();
+        return name === "type/epic" || name === "epic" || /^epic\/.+/i.test(name);
     });
-
-    if (hasEpicOrFeatureLabel) return true;
-
-    const fieldValues = item.fieldValues ?? item.content?.fieldValues ?? {};
-
-    const typeValue = String(
-        fieldValues["Type"]?.name ??
-        fieldValues["Type"] ??
-        fieldValues["type"]?.name ??
-        fieldValues["type"] ??
-        ""
-    ).toLowerCase().trim();
-
-    return ["feature", "epic", "new feature"].includes(typeValue);
 }
 
 export function matchesEpicSearch(item: any, searchTerm: string): boolean {
