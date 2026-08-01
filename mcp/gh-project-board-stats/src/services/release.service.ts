@@ -43,6 +43,10 @@ export function getItemStatusText(item: any): string {
     return text || "Unspecified";
 }
 
+function escapeRegExp(val: string): string {
+    return val.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function belongsToFunction(item: any, functionName: string): boolean {
     if (!functionName) return true;
 
@@ -52,14 +56,14 @@ export function belongsToFunction(item: any, functionName: string): boolean {
 
     const target = functionName.toLowerCase().trim();
     if (fieldText === target) return true;
-    return target.length >= 3 && fieldText.includes(target);
+
+    // Check if the target function name is a whole word in the field text
+    const safeTarget = escapeRegExp(target);
+    const regex = new RegExp(`\\b${safeTarget}\\b`, "i");
+    return regex.test(fieldText);
 }
 
-/**
- * Determines if the given item is a release/feature, based on its "Type" field or labels.
- * @param item - The project item to check.
- * @returns True if the item is a release, false otherwise.
- */
+// determine if the given item is a release, based on its "Type" field or labels.
 export function isRelease(item: any): boolean {
     const typeValue = getProjectFieldValue(item, "Type");
     const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
