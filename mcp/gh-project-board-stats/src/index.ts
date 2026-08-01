@@ -433,15 +433,15 @@ async function main() {
 
                 const savedBoards = await getUserSavedBoards(githubId);
                 if (savedBoards.length > 0) {
-                    const savedListText = savedBoards
-                        .slice(0, 5)
+                    const topSavedBoards = savedBoards.slice(0, 5);
+                    const savedListText = topSavedBoards
                         .map((b) => `* **${b.boardName}**`)
                         .join("\n");
 
                     return res.json({
                         type: "board_selection",
                         text: `Sure! Here are your recently accessed project boards:\n\n${savedListText}\n\nWhich board would you like to switch to?`,
-                        savedBoards: savedBoards.map((b) => b.boardName)
+                        savedBoards: topSavedBoards.map((b) => b.boardName)
                     });
                 }
 
@@ -514,15 +514,15 @@ async function main() {
                 const savedBoards = await getUserSavedBoards(githubId);
 
                 if (savedBoards.length > 0) {
-                    const savedListText = savedBoards
-                        .slice(0, 5)
+                    const topSavedBoards = savedBoards.slice(0, 5);
+                    const savedListText = topSavedBoards
                         .map((b) => `* **${b.boardName}**`)
                         .join("\n");
 
                     return res.json({
                         type: "board_selection",
                         text: `Welcome back! Here are the project boards you've recently interacted with:\n\n${savedListText}\n\nWhich one would you like to check today?`,
-                        savedBoards: savedBoards.map((b) => b.boardName)
+                        savedBoards: topSavedBoards.map((b) => b.boardName)
                     });
                 }
 

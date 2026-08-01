@@ -65,10 +65,7 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
       typeof parsed === "object" &&
       parsed !== null &&
       !Array.isArray(parsed) &&
-      "status" in parsed &&
-      "args" in parsed &&
-      typeof (parsed as Record<string, unknown>).args === "object" &&
-      (parsed as Record<string, unknown>).args !== null
+      "status" in parsed
     ) {
       const obj = parsed as Record<string, unknown>;
 
@@ -77,11 +74,26 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
         return fallback;
       }
 
-      const typedParsed = parsed as RoutedIntent;
-
-      if (typeof typedParsed.isSwitchingBoard !== "boolean") {
-        typedParsed.isSwitchingBoard = false;
+      let argsObj = obj.args;
+      if (typeof argsObj !== "object" || argsObj === null) {
+        argsObj = {
+          iteration: null,
+          function: null,
+          epicSearch: null,
+          listEpics: false,
+          status: null
+        };
       }
+
+      const typedParsed: RoutedIntent = {
+        status: obj.status as RoutedIntent["status"],
+        extractedBoardName: (obj.extractedBoardName as string) ?? null,
+        isSwitchingBoard: Boolean(obj.isSwitchingBoard),
+        args: argsObj as RoutedIntent["args"],
+        conversationalResponse: (obj.conversationalResponse as string) ?? null,
+        rawInput
+      };
+
       if (!typedParsed.args.iteration && recoveredIteration && typedParsed.status === "READY") {
         typedParsed.args.iteration = recoveredIteration;
       }
@@ -136,39 +148,39 @@ Return ONLY a single valid JSON object. Do not wrap code in text formatting bloc
 
 Classification Rules:
 1. Unsupported / Off-topic Requests:
-   - If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Set all "args" to null / false.
+- If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Always return an "args" object where all property values are set to null/false: { "iteration": null, "function": null, "epicSearch": null, "listEpics": false, "status": null }.
 2. Board Switch Request:
-   - If user asks to change or list boards, set "isSwitchingBoard": true.
+- If user asks to change or list boards, set "isSwitchingBoard": true.
 3. Project Board Query:
-   - If user input relates to project board items, epics, features, releases, or iterations, set status to "READY" (or "REQUIRES_BOARD_SELECTION" if no active board is selected and no board name is given).
+- If user input relates to project board items, epics, features, releases, or iterations, set status to "READY" (or "REQUIRES_BOARD_SELECTION" if no active board is selected and no board name is given).
 
 Parameter Extraction Matrix (for "READY" queries):
 - General principle: the person asking may phrase things in any way — different words, casual or formal tone, typos, indirect phrasing. Always classify by the underlying MEANING of what they're asking for, never by matching against specific example wording.
 - "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if the user explicitly asks for items in a specific state. Otherwise set to null.
-  - "done": "completed", "done", "finished", "shipped", "released", "closed"
-  - "in_progress": "in progress", "wip", "ongoing", "doing", "currently being worked on", "in development"
-  - "testing": "in qa", "testing", "under review", "uat", "review"
-  - "todo": "to do", "not started", "open", "backlog", "planned"
+- "done": "completed", "done", "finished", "shipped", "released", "closed"
+- "in_progress": "in progress", "wip", "ongoing", "doing", "currently being worked on", "in development"
+- "testing": "in qa", "testing", "under review", "uat", "review"
+- "todo": "to do", "not started", "open", "backlog", "planned"
 - "listEpics": In this system, "Epics" and "Features/Releases" are DIFFERENT, OPPOSING item types.
-  - Set true ONLY when the user explicitly wants to see items that ARE Epics themselves.
-  - Default to false for regular features/releases.
+- Set true ONLY when the user explicitly wants to see items that ARE Epics themselves.
+- Default to false for regular features/releases.
 - "epicSearch": Target feature/epic name string if searching within a specific epic. Otherwise null.
 - "function": Team, domain, or component parameter (e.g., "IAM", "People Operations"). Otherwise null.
 - "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified. ONLY populate if user input relates to a timeframe or iteration query. Do NOT default to "this_week" for general questions.
 
 Strict Output Schema:
 {
-  "status": "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED",
-  "extractedBoardName": string | null,
-  "isSwitchingBoard": boolean,
-  "args": {
-    "iteration": string | null,
-    "function": string | null,
-    "epicSearch": string | null,
-    "listEpics": boolean,
-    "status": string | null
-  },
-  "conversationalResponse": string | null
+"status": "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED",
+"extractedBoardName": string | null,
+"isSwitchingBoard": boolean,
+"args": {
+"iteration": string | null,
+"function": string | null,
+"epicSearch": string | null,
+"listEpics": boolean,
+"status": string | null
+},
+"conversationalResponse": string | null
 }
 `,
     messages: [{ role: "user", content: input }]
