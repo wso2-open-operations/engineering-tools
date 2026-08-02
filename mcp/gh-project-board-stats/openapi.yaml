@@ -6,7 +6,7 @@ info:
   description: >
     Backend service for querying GitHub Project boards through the GitHub MCP integration.
     Natural language queries are resolved into project board operations such as
-    release tracking, epic discovery, and board selection.
+    release tracking, epic discovery, board selection, and unsupported query handling.
     All endpoints except /health require a valid JWT supplied via the
     x-jwt-assertion header by the Choreo gateway.
 
@@ -51,7 +51,8 @@ paths:
       summary: Query GitHub Project Boards
       description: >
         Accepts a natural language question and returns release information,
-        epic information, board-selection prompts, or board acknowledgements.
+        epic information, board-selection prompts, board acknowledgements, or
+        unsupported query explanations.
 
       parameters:
         - name: x-jwt-assertion
@@ -101,6 +102,7 @@ paths:
                       - release_list
                       - epic_list
                       - epic_search_results
+                      - unsupported_query
 
                   text:
                     type: string
@@ -115,6 +117,16 @@ paths:
                     description: Returned when multiple matching boards are found.
                     items:
                       type: string
+
+                  savedBoards:
+                    type: array
+                    description: Returned during board selection when the user has previously saved or accessed project boards.
+                    items:
+                      type: string
+
+                  extractedQuestion:
+                    type: string
+                    description: Original user question retained when clarifying choices between multiple matching boards.
 
                   iteration:
                     type: string

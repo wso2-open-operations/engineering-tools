@@ -176,13 +176,15 @@ export async function runTool(
         );
     }
 
-    // filtering logic based on route arguments
+    // Filtering logic based on route arguments
     const listEpics: boolean = route?.args?.listEpics === true;
     const epicSearch: string | null = route?.args?.epicSearch ?? null;
     const requestedFunction: string | null = route?.args?.function ?? null;
     const requestedIteration: string | undefined = route?.args?.iteration;
 
     let iterationTargetTitle: string | null = null;
+    let hasResolvedStandardIteration = false;
+
     if (
         layoutType === "ITERATION_BASED" &&
         requestedIteration &&
@@ -192,6 +194,7 @@ export async function runTool(
             allItems,
             requestedIteration as "this_week" | "next_week" | "previous_week"
         );
+        hasResolvedStandardIteration = Boolean(iterationTargetTitle);
     }
 
     function matchesTimeOrStatusFilter(item: any): boolean {
@@ -210,6 +213,15 @@ export async function runTool(
         }
 
         return isMatchingIteration(iterationValue, requestedIteration);
+    }
+
+    if (
+        layoutType === "ITERATION_BASED" &&
+        requestedIteration &&
+        STANDARD_ITERATION_KEYS.has(requestedIteration) &&
+        !hasResolvedStandardIteration
+    ) {
+        return [];
     }
 
     if (listEpics) {

@@ -35,6 +35,12 @@ interface BoardCandidate {
     title: string;
 }
 
+interface UserSavedBoard {
+    projectId: number;
+    boardName: string;
+    organizationName: string;
+}
+
 const choreoJwksUri = process.env.CHOREO_JWKS_URI || "https://sts.choreo.dev/oauth2/jwks";
 const asgardeoJwksUri = process.env.ASGARDEO_JWKS_URI || "https://api.asgardeo.io/t/wso2/oauth2/jwks";
 const jwksUri = process.env.AUTH_ISSUER === "asgardeo" ? asgardeoJwksUri : choreoJwksUri;
@@ -154,6 +160,22 @@ async function findMatchingBoards(
     return dedupeBoards(matches);
 }
 
+async function getUserSavedBoards(githubId: string): Promise<UserSavedBoard[]> {
+    const [rows]: any = await dbPool.execute(
+        `SELECT project_id, board_name, organization_name 
+         FROM ghs_user_project_preferences 
+         WHERE github_id = ? AND is_remembered = 1 
+         ORDER BY last_accessed_at DESC`,
+        [githubId]
+    );
+
+    return rows.map((r: any) => ({
+        projectId: r.project_id,
+        boardName: r.board_name,
+        organizationName: r.organization_name
+    }));
+}
+
 function formatIterationLabel(iteration: string): string {
     if (iteration === 'previous_week') return "previous week's iteration";
     if (iteration === 'next_week') return "next week's iteration";
@@ -237,7 +259,31 @@ function buildResultsPayload(
         };
     }
 
-    const releaseItems = toReleaseItemsWithStatus(results);
+    let releaseItems = toReleaseItemsWithStatus(results);
+
+    // Filter items if a specific status was requested by the user
+    const targetStatus = intentArgs?.status?.toLowerCase().trim();
+    if (targetStatus) {
+        releaseItems = releaseItems.filter((item) => {
+            const itemStatus = item.status.toLowerCase();
+
+            if (targetStatus === "done" || targetStatus === "completed") {
+                return ["done", "completed", "complete", "finished", "shipped", "released", "closed"].some(s => itemStatus.includes(s));
+            }
+            if (targetStatus === "in_progress" || targetStatus === "wip") {
+                return ["in progress", "wip", "ongoing", "doing", "in dev", "in development"].some(s => itemStatus.includes(s));
+            }
+            if (targetStatus === "testing" || targetStatus === "qa") {
+                return ["testing", "uat", "qa", "review", "under review"].some(s => itemStatus.includes(s));
+            }
+            if (targetStatus === "todo") {
+                return ["todo", "to do", "not started", "open", "backlog"].some(s => itemStatus.includes(s));
+            }
+
+            return itemStatus.includes(targetStatus);
+        });
+    }
+
     const releases = releaseItems.map((r) => r.title);
     return {
         type: "release_list",
@@ -245,7 +291,11 @@ function buildResultsPayload(
             boardName,
             formatIterationLabel(resolvedIteration),
             releaseItems,
-            { targetFunction: intentArgs?.function, epicSearch: intentArgs?.epicSearch }
+            {
+                targetFunction: intentArgs?.function,
+                epicSearch: intentArgs?.epicSearch,
+                targetStatus: intentArgs?.status
+            }
         ),
         boardName,
         iteration: resolvedIteration,
@@ -346,21 +396,60 @@ async function main() {
 
                 await dbPool.execute(
                     `INSERT INTO ghs_user_session_state (github_id, active_board_name, active_project_id)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE active_board_name = ?, active_project_id = ?`,
+                     VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE active_board_name = ?, active_project_id = ?`,
                     [githubId, safeBoardName, projectId, safeBoardName, projectId]
                 );
 
-                // Update last accessed board in preferences table
                 await dbPool.execute(
                     `INSERT INTO ghs_user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered)
-         VALUES (?, ?, ?, ?, 1)
-         ON DUPLICATE KEY UPDATE board_name = ?, organization_name = ?, last_accessed_at = CURRENT_TIMESTAMP`,
+                     VALUES (?, ?, ?, ?, 1)
+                     ON DUPLICATE KEY UPDATE board_name = ?, organization_name = ?, last_accessed_at = CURRENT_TIMESTAMP`,
                     [githubId, projectId, ownerGroup, safeBoardName, safeBoardName, ownerGroup]
                 );
             }
 
+            async function clearActiveBoard() {
+                await dbPool.execute(
+                    `DELETE FROM ghs_user_session_state WHERE github_id = ?`,
+                    [githubId]
+                );
+            }
+
             const intent = await routeIntent(anthropic, question, activeBoardName);
+
+            // handle unsupported queries
+            if (intent.status === "UNSUPPORTED") {
+                return res.json({
+                    type: "unsupported_query",
+                    text: intent.conversationalResponse ||
+                        "I can help you view project board releases, epics, features, and iteration items. I don't currently support general questions or direct repository actions."
+                });
+            }
+
+            // Handle board switching requests
+            if (intent.isSwitchingBoard && !intent.extractedBoardName) {
+                await clearActiveBoard();
+
+                const savedBoards = await getUserSavedBoards(githubId);
+                if (savedBoards.length > 0) {
+                    const topSavedBoards = savedBoards.slice(0, 5);
+                    const savedListText = topSavedBoards
+                        .map((b) => `* **${b.boardName}**`)
+                        .join("\n");
+
+                    return res.json({
+                        type: "board_selection",
+                        text: `Sure! Here are your recently accessed project boards:\n\n${savedListText}\n\nWhich board would you like to switch to?`,
+                        savedBoards: topSavedBoards.map((b) => b.boardName)
+                    });
+                }
+
+                return res.json({
+                    type: "board_selection",
+                    text: "Sure! Which project board would you like to switch to? Give me the board name or a keyword."
+                });
+            }
 
             const resolvedIteration = intent.args?.iteration ?? 'this_week';
             const epicSearch = truncateString(intent.args?.epicSearch, 150);
@@ -377,17 +466,21 @@ async function main() {
                 if (matches.length === 0) {
                     return res.json({
                         type: "board_selection",
-                        text: `Couldn't find any board matching **"${intent.extractedBoardName}"**. Mind checking the title or keywords?`
+                        text: `Couldn't find any board under **${ownerGroup}** matching **"${intent.extractedBoardName}"**. Please check the board title or try another keyword.`
                     });
                 }
 
+                // Multiple matching boards under the organization
                 if (matches.length > 1) {
+                    const boardListText = matches
+                        .map((m) => `* **${m.title}**`)
+                        .join("\n");
+
                     return res.json({
                         type: "board_selection",
-                        text: `Found a few boards matching **"${intent.extractedBoardName}"**:\n\n` +
-                            matches.slice(0, 8).map((m) => `* **${m.title}**`).join("\n") +
-                            `\n\nWhich one did you have in mind?`,
-                        availableBoards: matches.map((m) => m.title)
+                        text: `I found multiple project boards matching **"${intent.extractedBoardName}"** under **${ownerGroup}**:\n\n${boardListText}\n\nWhich specific board would you like to view?`,
+                        availableBoards: matches.map((m) => m.title),
+                        extractedQuestion: question
                     });
                 }
 
@@ -400,7 +493,8 @@ async function main() {
                     intent.args?.iteration ||
                     intent.args?.function ||
                     intent.args?.epicSearch ||
-                    intent.args?.listEpics
+                    intent.args?.status ||
+                    listEpics
                 );
 
                 if (!hasQueryArgs) {
@@ -411,12 +505,27 @@ async function main() {
                     });
                 }
 
-            } else if (activeBoardName && activeProjectId) {
+            } else if (activeBoardName && activeProjectId && !intent.isSwitchingBoard) {
                 targetBoardName = activeBoardName;
                 targetProjectId = activeProjectId;
             }
 
             if (!targetBoardName || !targetProjectId) {
+                const savedBoards = await getUserSavedBoards(githubId);
+
+                if (savedBoards.length > 0) {
+                    const topSavedBoards = savedBoards.slice(0, 5);
+                    const savedListText = topSavedBoards
+                        .map((b) => `* **${b.boardName}**`)
+                        .join("\n");
+
+                    return res.json({
+                        type: "board_selection",
+                        text: `Welcome back! Here are the project boards you've recently interacted with:\n\n${savedListText}\n\nWhich one would you like to check today?`,
+                        savedBoards: topSavedBoards.map((b) => b.boardName)
+                    });
+                }
+
                 return res.json({
                     type: "board_selection",
                     text: "Which project board are we checking? Drop the board name or a keyword and I'll open it up."

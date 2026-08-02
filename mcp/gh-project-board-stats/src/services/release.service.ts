@@ -43,6 +43,10 @@ export function getItemStatusText(item: any): string {
     return text || "Unspecified";
 }
 
+function escapeRegExp(val: string): string {
+    return val.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function belongsToFunction(item: any, functionName: string): boolean {
     if (!functionName) return true;
 
@@ -52,31 +56,16 @@ export function belongsToFunction(item: any, functionName: string): boolean {
 
     const target = functionName.toLowerCase().trim();
     if (fieldText === target) return true;
-    return target.length >= 3 && fieldText.includes(target);
+
+    const safeTarget = escapeRegExp(target);
+    const regex = new RegExp(`\\b${safeTarget}\\b`, "i");
+    return regex.test(fieldText);
 }
 
-/**
- * Determines if the given item is a release, based on its "Type" field or labels.
- * @param item - The project item to check.
- * @returns True if the item is a release, false otherwise.
- */
-export function isRelease(item: any): boolean {
-    const typeValue = getProjectFieldValue(item, "Type");
-    const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
-
-    if (typeText) {
-        return typeText === "feature" || typeText === "enhancement" || typeText === "release";
-    }
-
-    const labels = getLabelNames(item);
-    return labels.some((label) => {
-        const name = label.trim().toLowerCase();
-        if (name === "type/epic") return false;
-        return ["feature", "enhancement", "release"].some((keyword) => name.includes(keyword));
-    });
-}
-
+// Determines if the given item is an Epic, based on its "Type" field or labels.
 export function isEpicTypeItem(item: any): boolean {
+    if (!item) return false;
+
     const typeValue = getProjectFieldValue(item, "Type");
     const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
 
@@ -85,7 +74,29 @@ export function isEpicTypeItem(item: any): boolean {
     }
 
     const labels = getLabelNames(item);
-    return labels.some((label) => label.trim().toLowerCase() === "type/epic");
+    return labels.some((label) => {
+        const name = label.trim().toLowerCase();
+        return name === "type/epic" || name === "epic" || /^epic\/.+/i.test(name);
+    });
+}
+
+// Determines if the given item is a Release, based on its "Type" field or labels.
+export function isRelease(item: any): boolean {
+    const typeValue = getProjectFieldValue(item, "Type");
+    const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
+
+    if (typeText) {
+        return typeText === "feature" || typeText === "enhancement" || typeText === "release";
+    }
+    if (isEpicTypeItem(item)) {
+        return false;
+    }
+
+    const labels = getLabelNames(item);
+    return labels.some((label) => {
+        const name = label.trim().toLowerCase();
+        return ["feature", "enhancement", "release"].some((keyword) => name.includes(keyword));
+    });
 }
 
 export function matchesEpicSearch(item: any, searchTerm: string): boolean {

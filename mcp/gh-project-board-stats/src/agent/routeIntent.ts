@@ -17,13 +17,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 export interface RoutedIntent {
-  status: "READY" | "REQUIRES_BOARD_SELECTION";
+  status: "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED";
   extractedBoardName: string | null;
+  isSwitchingBoard: boolean;
   args: {
     iteration: string | null;
     function: string | null;
     epicSearch: string | null;
     listEpics: boolean;
+    status: string | null;
   };
   conversationalResponse: string | null;
   rawInput?: string;
@@ -42,13 +44,15 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
   const fallback: RoutedIntent = {
     status: "REQUIRES_BOARD_SELECTION",
     extractedBoardName: null,
+    isSwitchingBoard: false,
     args: {
-      iteration: recoveredIteration,
+      iteration: null,
       function: null,
       epicSearch: null,
-      listEpics: false
+      listEpics: false,
+      status: null
     },
-    conversationalResponse: "I couldn't quite process that request. Which project board would you like to view?",
+    conversationalResponse: "Which project board would you like to view?",
     rawInput
   };
 
@@ -61,21 +65,36 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
       typeof parsed === "object" &&
       parsed !== null &&
       !Array.isArray(parsed) &&
-      "status" in parsed &&
-      "args" in parsed &&
-      typeof (parsed as Record<string, unknown>).args === "object" &&
-      (parsed as Record<string, unknown>).args !== null
+      "status" in parsed
     ) {
       const obj = parsed as Record<string, unknown>;
 
-      if (obj.status !== "READY" && obj.status !== "REQUIRES_BOARD_SELECTION") {
+      if (obj.status !== "READY" && obj.status !== "REQUIRES_BOARD_SELECTION" && obj.status !== "UNSUPPORTED") {
         console.warn(`Invalid status value "${String(obj.status)}" returned from LLM. Falling back.`);
         return fallback;
       }
 
-      const typedParsed = parsed as RoutedIntent;
+      let argsObj = obj.args;
+      if (typeof argsObj !== "object" || argsObj === null) {
+        argsObj = {
+          iteration: null,
+          function: null,
+          epicSearch: null,
+          listEpics: false,
+          status: null
+        };
+      }
 
-      if (!typedParsed.args.iteration && recoveredIteration) {
+      const typedParsed: RoutedIntent = {
+        status: obj.status as RoutedIntent["status"],
+        extractedBoardName: (obj.extractedBoardName as string) ?? null,
+        isSwitchingBoard: Boolean(obj.isSwitchingBoard),
+        args: argsObj as RoutedIntent["args"],
+        conversationalResponse: (obj.conversationalResponse as string) ?? null,
+        rawInput
+      };
+
+      if (!typedParsed.args.iteration && recoveredIteration && typedParsed.status === "READY") {
         typedParsed.args.iteration = recoveredIteration;
       }
       if (typeof typedParsed.args.function === "undefined") {
@@ -86,6 +105,9 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
       }
       if (typeof typedParsed.args.listEpics !== "boolean") {
         typedParsed.args.listEpics = false;
+      }
+      if (typeof typedParsed.args.status === "undefined") {
+        typedParsed.args.status = null;
       }
 
       return typedParsed;
@@ -109,48 +131,57 @@ export async function routeIntent(
     max_tokens: 300,
     temperature: 0,
     system: `
-You are an advanced project board routing coordinator. You evaluate user intentions and translate conversational requests into explicit processing targets.
+You are an advanced project board routing coordinator for GitHub Project Boards. You evaluate user input and extract relevant filter parameters or handle unsupported requests.
 
 Active Context Parameter:
-- Mapped Target Project Board: ${contextBoardName ?? "NONE (Unknown)"}
+- Currently Selected Board: ${contextBoardName ?? "NONE (Unknown)"}
+
+Capabilities Supported By This System:
+1. Viewing releases or items scheduled for an iteration/timeframe (e.g., "this week", "next sprint", "previous iteration").
+2. Filtering items by team/function/domain (e.g., "IAM", "People Operations", "Engineering").
+3. Listing epics or features (e.g., "show epics", "list features").
+4. Searching for items under a specific feature or epic name (e.g., "tasks in User Auth epic").
+5. Filtering items by execution status (e.g., "what's done", "show completed items", "what is in progress").
+6. Switching or listing available project boards.
 
 Return ONLY a single valid JSON object. Do not wrap code in text formatting blocks.
 
-Output Response Struct Evaluation Rules:
-1. Target Action Logic: Determine if the user is asking to extract release metrics/timeline statistics, providing confirmation details to initialize a board, asking to see a list of Epics, or searching for items under a specific Epic/feature label.
-2. Board Discovery Analysis: Check if the request explicitly designates a specific target board by name (e.g., "Digital Project Management Dashboard", "Platform Engineering") or if they want to SWITCH boards (e.g., "change board", "switch project", "look at another board").
-3. Parameter Extraction Matrix:
-   - "iteration": Map natural time expressions into standard keys:
-     - Current period ("this week", "current sprint", "now", "today", "active iteration") -> "this_week"
-     - Next period ("next week", "upcoming sprint", "next release", "coming up") -> "next_week"
-     - Past period ("last week", "previous sprint", "past iteration", "completed") -> "previous_week"
-     If the user specifies an explicit named sprint, month, or custom interval (e.g., "Sprint 45", "July"), output that exact string verbatim. Default to "this_week".
-   - "function": Extract team or domain parameters (e.g., "IAM", "People Operations", "Frontend"). If missing, return null.
-   - "epicSearch": Extract the target epic term when the user asks about an epic or feature group.
-     Examples:
-     - "what's under epic test4" -> "test4"
-     - "show items tagged EPIC/login-v2" -> "login-v2"
-     - "breakdown of the auth feature group" -> "auth"
-     - "what features are in the billing epic?" -> "billing"
-     If not searching for a specific epic/label, return null.
-   - "listEpics": Set to true ONLY if the user is asking to list or see items that are themselves Epics (e.g., "show me all epics", "list epics", "what epics do we have"). Otherwise false.
+Classification Rules:
+1. Unsupported / Off-topic Requests:
+- If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Always return an "args" object where all property values are set to null/false: { "iteration": null, "function": null, "epicSearch": null, "listEpics": false, "status": null }.
+2. Board Switch Request:
+- If user asks to change or list boards, set "isSwitchingBoard": true.
+3. Project Board Query:
+- If user input relates to project board items, epics, features, releases, or iterations, set status to "READY" (or "REQUIRES_BOARD_SELECTION" if no active board is selected and no board name is given).
 
-Provide output matching this strict schema structure:
+Parameter Extraction Matrix (for "READY" queries):
+- General principle: the person asking may phrase things in any way — different words, casual or formal tone, typos, indirect phrasing. Always classify by the underlying MEANING of what they're asking for, never by matching against specific example wording.
+- "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if the user explicitly asks for items in a specific state. Otherwise set to null.
+- "done": "completed", "done", "finished", "shipped", "released", "closed"
+- "in_progress": "in progress", "wip", "ongoing", "doing", "currently being worked on", "in development"
+- "testing": "in qa", "testing", "under review", "uat", "review"
+- "todo": "to do", "not started", "open", "backlog", "planned"
+- "listEpics": In this system, "Epics" and "Features/Releases" are DIFFERENT, OPPOSING item types.
+- Set true ONLY when the user explicitly wants to see items that ARE Epics themselves.
+- Default to false for regular features/releases.
+- "epicSearch": Target feature/epic name string if searching within a specific epic. Otherwise null.
+- "function": Team, domain, or component parameter (e.g., "IAM", "People Operations"). Otherwise null.
+- "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified. ONLY populate if user input relates to a timeframe or iteration query. Do NOT default to "this_week" for general questions.
+
+Strict Output Schema:
 {
-  "status": "READY" | "REQUIRES_BOARD_SELECTION",
-  "extractedBoardName": string | null,
-  "args": {
-    "iteration": string | null,
-    "function": string | null,
-    "epicSearch": string | null,
-    "listEpics": boolean
-  },
-  "conversationalResponse": string | null
+"status": "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED",
+"extractedBoardName": string | null,
+"isSwitchingBoard": boolean,
+"args": {
+"iteration": string | null,
+"function": string | null,
+"epicSearch": string | null,
+"listEpics": boolean,
+"status": string | null
+},
+"conversationalResponse": string | null
 }
-
-Behavior States:
-- If context board parameter is "NONE" and user input doesn't mention a distinct board name, flag status as "REQUIRES_BOARD_SELECTION".
-- CRITICAL OVERRIDE: If the user explicitly asks to "switch boards", "change project", or names a completely different board than the active context board "${contextBoardName}", set status to "REQUIRES_BOARD_SELECTION" and extract the new board name if provided.
 `,
     messages: [{ role: "user", content: input }]
   });
