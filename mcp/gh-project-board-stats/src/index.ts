@@ -427,8 +427,49 @@ async function main() {
                 });
             }
 
-            // Handle board switching requests
-            if (intent.isSwitchingBoard && !intent.extractedBoardName) {
+            // Handle board switching / keyword search requests
+            if (intent.isSwitchingBoard) {
+                if (intent.extractedBoardName) {
+                    const matches = await withTimeout(30000, (signal) =>
+                        findMatchingBoards(client, ownerGroup, intent.extractedBoardName!, signal)
+                    );
+
+                    // No match found -> ask user to clarify what they need
+                    if (matches.length === 0) {
+                        return res.json({
+                            type: "board_selection",
+                            text: `I couldn't find any project board matching **"${intent.extractedBoardName}"** under **${ownerGroup}**.\n\nCould you please clarify the board name or try a different keyword?`
+                        });
+                    }
+
+                    // Multiple matches found -> display options
+                    if (matches.length > 1) {
+                        const boardListText = matches
+                            .map((m) => `* **${m.title}**`)
+                            .join("\n");
+
+                        return res.json({
+                            type: "board_selection",
+                            text: `I found ${matches.length} project boards matching **"${intent.extractedBoardName}"**:\n\n${boardListText}\n\nWhich specific board would you like to view?`,
+                            availableBoards: matches.map((m) => m.title),
+                            extractedQuestion: question
+                        });
+                    }
+
+                    // Exactly 1 match found -> switch board directly
+                    const matchedBoardName = matches[0].title;
+                    const matchedProjectId = matches[0].number;
+
+                    await setActiveBoard(matchedBoardName, matchedProjectId);
+
+                    return res.json({
+                        type: "board_acknowledgment",
+                        text: `Got it! Switched to **${matchedBoardName}**. What would you like to know about this board?`,
+                        boardName: matchedBoardName
+                    });
+                }
+
+                // Generic switch request without a board keyword
                 await clearActiveBoard();
 
                 const savedBoards = await getUserSavedBoards(githubId);
@@ -466,7 +507,7 @@ async function main() {
                 if (matches.length === 0) {
                     return res.json({
                         type: "board_selection",
-                        text: `Couldn't find any board under **${ownerGroup}** matching **"${intent.extractedBoardName}"**. Please check the board title or try another keyword.`
+                        text: `I couldn't find any board under **${ownerGroup}** matching **"${intent.extractedBoardName}"**. Could you please check the title or give me another keyword?`
                     });
                 }
 
