@@ -17,6 +17,8 @@
 /*
 * This file contains utility functions for formatting chat messages in Markdown format
  */
+import { STATUS_ORDER, STATUS_LABELS } from "../constants/status";
+
 export interface MultiBoardResult {
     boardName: string;
     releases?: string[];
@@ -45,16 +47,8 @@ function dedupeByTitle<T extends { title: string } | string>(items: T[]): T[] {
     return result;
 }
 
-const STATUS_DISPLAY_ORDER = [
-    "done",
-    "testing/uat",
-    "in progress",
-    "todo",
-    "backlog"
-];
-
 function getStatusRank(status: string): number {
-    return STATUS_DISPLAY_ORDER.indexOf(status.trim().toLowerCase());
+    return STATUS_ORDER.indexOf(status.toLowerCase() as any);
 }
 
 function sortStatusGroups(statuses: string[]): string[] {
@@ -140,8 +134,10 @@ export function formatReleaseList(
 
     text += orderedStatuses
         .map((status) => {
+            const display =
+                STATUS_LABELS[status as keyof typeof STATUS_LABELS] ?? status;
             const titles = grouped.get(status)!;
-            const header = `**${status}** (${titles.length})`;
+            const header = `**${display}** (${titles.length})`;
             const list = titles.map((t) => `* ${t}`).join("\n");
             return `${header}\n${list}`;
         })
