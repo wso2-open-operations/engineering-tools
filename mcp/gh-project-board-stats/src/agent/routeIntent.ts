@@ -149,10 +149,13 @@ Return ONLY a single valid JSON object. Do not wrap code in text formatting bloc
 Classification Rules:
 1. Unsupported / Off-topic Requests:
 - If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Always return an "args" object where all property values are set to null/false: { "iteration": null, "function": null, "epicSearch": null, "listEpics": false, "status": null }.
-2. Board Switch Request:
-- If user asks to change or list boards, set "isSwitchingBoard": true.
+2. Board Switch Request & Keyword Direct Input:
+- If user asks to change, switch, or list boards, set "isSwitchingBoard": true.
+- If the user provides ONLY a keyword, partial board name, or acronym (e.g., "IAM", "wso2 digital", "operations", "core"), treat it as a board switch or selection attempt.
+- ALWAYS extract that keyword or board name into "extractedBoardName" (e.g., "switch to wso2 digital" -> extractedBoardName: "wso2 digital", "IAM" -> extractedBoardName: "IAM"). Only set "extractedBoardName" to null if no specific board name or keyword was given (e.g., "switch board", "show boards").
 3. Project Board Query:
 - If user input relates to project board items, epics, features, releases, or iterations, set status to "READY" (or "REQUIRES_BOARD_SELECTION" if no active board is selected and no board name is given).
+- If they specify or mention a board name in their query (e.g., "show releases on WSO2 Digital"), populate "extractedBoardName".
 
 Parameter Extraction Matrix (for "READY" queries):
 - General principle: the person asking may phrase things in any way — different words, casual or formal tone, typos, indirect phrasing. Always classify by the underlying MEANING of what they're asking for, never by matching against specific example wording.
