@@ -16,6 +16,7 @@
 
 
 import { getProjectFieldValue } from "./projectItem.service";
+import { canonicalizeStatus } from "../constants/status";
 
 function getLabelNames(item: any): string[] {
     const raw = item?.content?.labels ?? item?.labels ?? [];
@@ -41,6 +42,17 @@ export function getItemStatusText(item: any): string {
     const statusValue = getProjectFieldValue(item, "Status");
     const text = resolveFieldDisplayValue(statusValue).trim();
     return text || "Unspecified";
+}
+
+export function matchesStatusFilter(item: any, targetStatus?: string | null): boolean {
+    if (!targetStatus) return true;
+    const normalizedTarget = canonicalizeStatus(targetStatus);
+    if (!normalizedTarget) return true;
+
+    const itemStatusText = getItemStatusText(item);
+    const normalizedItemStatus = canonicalizeStatus(itemStatusText);
+
+    return normalizedItemStatus === normalizedTarget;
 }
 
 function escapeRegExp(val: string): string {

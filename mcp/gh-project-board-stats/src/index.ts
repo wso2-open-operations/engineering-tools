@@ -85,10 +85,11 @@ function toReleaseItemsWithStatus(releases: any[]): Array<{ title: string; statu
     }));
 }
 
-function toEpicItems(items: any[]): Array<{ title: string; epicLabel: string | null }> {
+function toEpicItems(items: any[]): Array<{ title: string; epicLabel: string | null; status: string }> {
     return dedupeResultItems(items).map((item: any) => ({
         title: item.content?.title ?? "Untitled Issue",
-        epicLabel: item.epicLabelText ?? null
+        epicLabel: item.epicLabelText ?? null,
+        status: getItemStatusText(item)
     }));
 }
 
@@ -119,7 +120,7 @@ function buildResultsPayload(
         const epics = toEpicItems(results);
         return {
             type: "epic_list",
-            text: formatEpicList(boardName, epics),
+            text: formatEpicList(boardName, epics, intentArgs?.status),
             boardName,
             epics
         };
@@ -129,7 +130,7 @@ function buildResultsPayload(
         const items = toEpicItems(results);
         return {
             type: "epic_search_results",
-            text: formatEpicSearchResults(boardName, epicSearch, items),
+            text: formatEpicSearchResults(boardName, epicSearch, items, intentArgs?.status),
             boardName,
             searchTerm: epicSearch,
             items

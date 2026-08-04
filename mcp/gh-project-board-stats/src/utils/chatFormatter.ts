@@ -151,16 +151,19 @@ export function formatReleaseList(
 
 export function formatEpicList(
     boardName: string,
-    epics: Array<{ title: string; epicLabel: string | null }>,
+    epics: Array<{ title: string; epicLabel: string | null; status?: string }>,
+    targetStatus?: string | null,
     prefix: string = ""
 ): string {
     const cleanEpics = dedupeByTitle(epics);
 
     if (cleanEpics.length === 0) {
-        return `${prefix}No Epics found on **${boardName}**.`;
+        const statusMsg = targetStatus ? ` with status **"${targetStatus}"**` : "";
+        return `${prefix}No Epics found on **${boardName}**${statusMsg}.`;
     }
 
-    let text = `${prefix}Here are the active Epics on **${boardName}**:\n\n`;
+    const statusHeader = targetStatus ? ` (${targetStatus})` : "";
+    let text = `${prefix}Here are the active Epics${statusHeader} on **${boardName}**:\n\n`;
     text += cleanEpics.map((e) => `* **${e.title}**`).join("\n");
     text += `\n\n_Let me know if you want to inspect items under any of these Epics._`;
 
@@ -170,16 +173,19 @@ export function formatEpicList(
 export function formatEpicSearchResults(
     boardName: string,
     searchTerm: string,
-    items: Array<{ title: string; epicLabel: string | null }>,
+    items: Array<{ title: string; epicLabel: string | null; status?: string }>,
+    targetStatus?: string | null,
     prefix: string = ""
 ): string {
     const cleanItems = dedupeByTitle(items);
 
     if (cleanItems.length === 0) {
-        return `${prefix}No items matched **"${searchTerm}"** on **${boardName}**.`;
+        const statusMsg = targetStatus ? ` with status **"${targetStatus}"**` : "";
+        return `${prefix}No items matched **"${searchTerm}"** on **${boardName}**${statusMsg}.`;
     }
 
-    let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
+    const statusHeader = targetStatus ? ` with status **"${targetStatus}"**` : "";
+    let text = `${prefix}Here's what matched **"${searchTerm}"**${statusHeader} on **${boardName}**:\n\n`;
     text += cleanItems.map((i) => `* **${i.title}**`).join("\n");
     text += `\n\n_Need details on any of these items?_`;
 
