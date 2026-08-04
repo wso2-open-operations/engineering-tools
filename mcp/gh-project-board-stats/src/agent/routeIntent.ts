@@ -15,21 +15,7 @@
 // under the License.
 
 import Anthropic from "@anthropic-ai/sdk";
-
-export interface RoutedIntent {
-  status: "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED";
-  extractedBoardName: string | null;
-  isSwitchingBoard: boolean;
-  args: {
-    iteration: string | null;
-    function: string | null;
-    epicSearch: string | null;
-    listEpics: boolean;
-    status: string | null;
-  };
-  conversationalResponse: string | null;
-  rawInput?: string;
-}
+import type { RoutedIntent } from "../types/intent";
 
 function detectIterationFromRawInput(rawInput: string): string | null {
   if (/next\s*(week|sprint|iteration)/i.test(rawInput)) return "next_week";
@@ -69,7 +55,11 @@ function safeParse(text: string, rawInput: string): RoutedIntent {
     ) {
       const obj = parsed as Record<string, unknown>;
 
-      if (obj.status !== "READY" && obj.status !== "REQUIRES_BOARD_SELECTION" && obj.status !== "UNSUPPORTED") {
+      if (
+        obj.status !== "READY" &&
+        obj.status !== "REQUIRES_BOARD_SELECTION" &&
+        obj.status !== "UNSUPPORTED"
+      ) {
         console.warn(`Invalid status value "${String(obj.status)}" returned from LLM. Falling back.`);
         return fallback;
       }
@@ -131,59 +121,59 @@ export async function routeIntent(
     max_tokens: 300,
     temperature: 0,
     system: `
-You are an advanced project board routing coordinator for GitHub Project Boards. You evaluate user input and extract relevant filter parameters or handle unsupported requests.
+You are an advanced project board routing coordinator for GitHub Project Boards. You evaluate user input, extract filter parameters, identify target project boards, and handle unsupported requests.
 
 Active Context Parameter:
 - Currently Selected Board: ${contextBoardName ?? "NONE (Unknown)"}
 
 Capabilities Supported By This System:
-1. Viewing releases or items scheduled for an iteration/timeframe (e.g., "this week", "next sprint", "previous iteration").
+1. Viewing releases, features, or items scheduled for an iteration/timeframe (e.g., "this week", "next sprint", "previous iteration").
 2. Filtering items by team/function/domain (e.g., "Sales", "People Operations", "Engineering").
-3. Listing epics or features (e.g., "show epics", "list features").
-4. Searching for items under a specific feature or epic name (e.g., "tasks in User Auth epic").
+3. Listing high-level epics or features (e.g., "show epics", "list features", "show feature list").
+4. Searching for items under a specific feature or epic name (e.g., "tasks in User Auth epic", "items under Payment feature").
 5. Filtering items by execution status (e.g., "what's done", "show completed items", "what is in progress").
-6. Switching or listing available project boards.
+6. Switching or querying any project board in the organization.
 
 Return ONLY a single valid JSON object. Do not wrap code in text formatting blocks.
 
 Classification Rules:
 1. Unsupported / Off-topic Requests:
-- If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse" stating what you can and cannot do. Always return an "args" object where all property values are set to null/false: { "iteration": null, "function": null, "epicSearch": null, "listEpics": false, "status": null }.
+- If the user asks something completely outside project board capabilities (e.g., "write python code", "delete an issue", "create a repository"), set status to "UNSUPPORTED" and provide a polite explanation in "conversationalResponse". Set all "args" properties to null/false: { "iteration": null, "function": null, "epicSearch": null, "listEpics": false, "status": null }.
 
-2. Board Switch Request & Keyword Selection Precedence:
-- Explicit Switch: If user explicitly asks to change, switch, open, or list boards (e.g., "switch board", "open wso2 digital", "change board to IAM"), set "isSwitchingBoard": true and populate "extractedBoardName" if a board target is given.
-- Standalone Bare Keyword (No Active Board): If "Currently Selected Board" is "NONE (Unknown)" and the user types a single keyword or short term (e.g., "IAM", "wso2 digital"), treat it as a BOARD SWITCH request: set "isSwitchingBoard": true and "extractedBoardName": "<keyword>".
-- Standalone Bare Keyword (Active Board Present): If "Currently Selected Board" is active AND the user enters a single keyword without switch action words (e.g., "Security", "Engineering"), treat it as a QUERY on the active board: set status to "READY", "isSwitchingBoard": false, and extract it into "args.function".
+2. Board Switch Request & Keyword Selection:
+- Explicit Switch: If user explicitly asks to change, switch, open, or list boards (e.g., "switch board to IAM", "open DevPortal", "go to HIPAA"), set "isSwitchingBoard": true and populate "extractedBoardName".
+- Bare Board Term: If the user enters a board target term without explicit item query filters (e.g., "HIPAA 2026", "WSO2 Digital", "APIP Cloud"), treat it as a BOARD SWITCH/SELECTION request: set "isSwitchingBoard": true and "extractedBoardName" to the extracted term.
 
 3. Project Board Query:
-- If user input relates to project board items, epics, features, releases, or iterations, set status to "READY" (or "REQUIRES_BOARD_SELECTION" if no active board is selected and no board target/keyword is given).
-- If they specify or mention a target board name directly inside a query (e.g., "show releases on WSO2 Digital"), populate "extractedBoardName".
+- If user input relates to project board items, epics, features, releases, or iterations:
+  - If a specific target board name is mentioned or referenced inside the query (e.g., "show releases on WSO2 Digital", "what is done in DevPortal?"), populate "extractedBoardName" with the extracted board term.
+  - If no board name is mentioned and "Currently Selected Board" is active, set status to "READY" and run the query on the current board.
+  - If no board name is mentioned and "Currently Selected Board" is "NONE (Unknown)", set status to "REQUIRES_BOARD_SELECTION".
+
+4. CRITICAL — Extracted Board Target Cleaning Rules:
+- Extract ONLY the core identifier keyword or title phrase into "extractedBoardName".
+- Strip away conversational wrapper words: "board", "boards", "project", "projects", "team", "related", "related to", "show me", "open", "switch to", "regarding", "for", "the", "in", "about".
 
 Parameter Extraction Matrix (for "READY" queries):
-- General principle: classify by the underlying MEANING of what they're asking for.
-- "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if the user explicitly asks for items in a specific state. Otherwise set to null.
-- "done": "completed", "done", "finished", "shipped", "released", "closed"
-- "in_progress": "in progress", "wip", "ongoing", "doing", "currently being worked on", "in development"
-- "testing": "in qa", "testing", "under review", "uat", "review"
-- "todo": "to do", "not started", "open", "backlog", "planned"
-- "listEpics": Set true ONLY when the user explicitly wants to see items that ARE Epics themselves. Default to false for regular features/releases.
-- "epicSearch": Target feature/epic name string if searching within a specific epic. Otherwise null.
-- "function": Team, domain, or component parameter (e.g., "Security", "People Operations"). Otherwise null.
-- "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified. ONLY populate if user input relates to a timeframe or iteration query. Do NOT default to "this_week" for general questions.
+- "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if explicitly asked. Otherwise null.
+- "listEpics": Set true when the user asks to LIST high-level Epics or Features (e.g., "list epics", "show epics", "list features", "show features", "get all epics"). Default false.
+- "listEpics": Set true ONLY when the user explicitly asks to list high-level Epic containers (e.g., "list epics", "show all epics", "get epics"). If the user asks for "features", "tasks", or "items" belonging to a specific team or function (e.g., "features on Engineering team"), set "listEpics": false and populate "function".
+- "function": Functional team/department filter ONLY if it is a department or team name (e.g., "Sales", "Engineering", "People Ops"). Do NOT map feature/epic names here.
+- "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified.
 
 Strict Output Schema:
 {
-"status": "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED",
-"extractedBoardName": string | null,
-"isSwitchingBoard": boolean,
-"args": {
-"iteration": string | null,
-"function": string | null,
-"epicSearch": string | null,
-"listEpics": boolean,
-"status": string | null
-},
-"conversationalResponse": string | null
+  "status": "READY" | "REQUIRES_BOARD_SELECTION" | "UNSUPPORTED",
+  "extractedBoardName": string | null,
+  "isSwitchingBoard": boolean,
+  "args": {
+    "iteration": string | null,
+    "function": string | null,
+    "epicSearch": string | null,
+    "listEpics": boolean,
+    "status": string | null
+  },
+  "conversationalResponse": string | null
 }
 `,
     messages: [{ role: "user", content: input }]

@@ -17,78 +17,21 @@
 import "dotenv/config";
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
-import jwt from "jsonwebtoken";
-import jwksClient from "jwks-rsa";
 import { connectMCP } from "./tools/mcpClient";
 import { routeIntent } from "./agent/routeIntent";
 import { runTool } from "./tools/runTool";
 import { getItemStatusText } from "./services/release.service";
-import { dbPool, initializeDatabase } from "./database/mysql";
+import { initializeDatabase } from "./database/mysql";
 import {
     formatReleaseList,
     formatEpicList,
     formatEpicSearchResults
 } from "./utils/chatFormatter";
-
-interface BoardCandidate {
-    number: number;
-    title: string;
-}
-
-interface UserSavedBoard {
-    projectId: number;
-    boardName: string;
-    organizationName: string;
-}
-
-const choreoJwksUri = process.env.CHOREO_JWKS_URI || "https://sts.choreo.dev/oauth2/jwks";
-const asgardeoJwksUri = process.env.ASGARDEO_JWKS_URI || "https://api.asgardeo.io/t/wso2/oauth2/jwks";
-const jwksUri = process.env.AUTH_ISSUER === "asgardeo" ? asgardeoJwksUri : choreoJwksUri;
-
-const clientJwks = jwksClient({
-    jwksUri,
-    cache: true,
-    cacheMaxEntries: 5,
-    cacheMaxAge: 600000
-});
-
-function getKey(header: jwt.JwtHeader, callback: jwt.SigningKeyCallback) {
-    clientJwks.getSigningKey(header.kid, (err, key) => {
-        if (err || !key) {
-            return callback(err || new Error("JWKS key match not found"));
-        }
-        const signingKey = key.getPublicKey();
-        callback(null, signingKey);
-    });
-}
-
-async function extractClaimsFromJwt(jwtAssertion: string): Promise<{ githubId: string; email: string } | null> {
-    return new Promise((resolve) => {
-        jwt.verify(jwtAssertion, getKey, { algorithms: ["RS256"] }, (err, decoded: any) => {
-            if (err || !decoded) {
-                console.error("JWT signature verification failed:", err?.message);
-                return resolve(null);
-            }
-            if (!decoded.exp) {
-                console.error("Token is missing an expiration ('exp') claim, rejecting.");
-                return resolve(null);
-            }
-
-            const githubId = decoded.github_id || decoded.sub;
-            const email = decoded.email;
-
-            if (!githubId || !email) {
-                console.error("Token is missing required claims (github_id/sub or email).");
-                return resolve(null);
-            }
-
-            resolve({
-                githubId: String(githubId).trim(),
-                email: String(email).trim()
-            });
-        });
-    });
-}
+import { canonicalizeStatus } from "./constants/status";
+import { authenticateRequest } from "./services/authentication.service";
+import { getUserSession, setActiveBoard, clearActiveBoard, getSavedBoards } from "./services/session.service";
+import { findMatchingBoards, resolveBoard, requiresBoardLookup } from "./services/board.service";
+import { ensureUserExists } from "./services/project.service";
 
 function withTimeout<T>(
     timeoutMs: number,
@@ -108,72 +51,6 @@ function withTimeout<T>(
         operation(controller.signal),
         timeoutPromise
     ]);
-}
-
-function getMcpResponseText(result: any): string {
-    if (!result || !result.content || !Array.isArray(result.content)) {
-        return "";
-    }
-    return result.content
-        .filter((c: any) => c && c.type === "text")
-        .map((c: any) => c.text)
-        .join("\n");
-}
-
-function safeJsonParse(rawText: string): any {
-    const trimmed = rawText.trim();
-    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-        throw new Error(`Invalid non-JSON diagnostic payload returned from MCP backend: ${trimmed.slice(0, 150)}`);
-    }
-    return JSON.parse(trimmed);
-}
-
-function dedupeBoards(projects: BoardCandidate[]): BoardCandidate[] {
-    const seen = new Map<number, BoardCandidate>();
-    for (const p of projects) {
-        if (!seen.has(p.number)) seen.set(p.number, p);
-    }
-    return Array.from(seen.values());
-}
-
-async function findMatchingBoards(
-    client: any,
-    owner: string,
-    searchTerm: string,
-    signal?: AbortSignal
-): Promise<BoardCandidate[]> {
-    const discovery = await client.callTool({
-        name: "projects_list",
-        arguments: { method: "list_projects", owner }
-    });
-
-    const discoveryText = getMcpResponseText(discovery);
-    const raw = safeJsonParse(discoveryText);
-    const projects = Array.isArray(raw) ? raw : (raw.projects || []);
-
-    const target = searchTerm.toLowerCase().trim();
-
-    const matches = projects
-        .filter((p: any) => typeof p.title === "string" && p.title.toLowerCase().includes(target))
-        .map((p: any) => ({ number: p.number, title: p.title }));
-
-    return dedupeBoards(matches);
-}
-
-async function getUserSavedBoards(githubId: string): Promise<UserSavedBoard[]> {
-    const [rows]: any = await dbPool.execute(
-        `SELECT project_id, board_name, organization_name 
-         FROM ghs_user_project_preferences 
-         WHERE github_id = ? AND is_remembered = 1 
-         ORDER BY last_accessed_at DESC`,
-        [githubId]
-    );
-
-    return rows.map((r: any) => ({
-        projectId: r.project_id,
-        boardName: r.board_name,
-        organizationName: r.organization_name
-    }));
 }
 
 function formatIterationLabel(iteration: string): string {
@@ -208,10 +85,11 @@ function toReleaseItemsWithStatus(releases: any[]): Array<{ title: string; statu
     }));
 }
 
-function toEpicItems(items: any[]): Array<{ title: string; epicLabel: string | null }> {
+function toEpicItems(items: any[]): Array<{ title: string; epicLabel: string | null; status: string }> {
     return dedupeResultItems(items).map((item: any) => ({
         title: item.content?.title ?? "Untitled Issue",
-        epicLabel: item.epicLabelText ?? null
+        epicLabel: item.epicLabelText ?? null,
+        status: getItemStatusText(item)
     }));
 }
 
@@ -238,21 +116,40 @@ function buildResultsPayload(
     listEpics: boolean,
     intentArgs?: any
 ): { type: string; text: string; boardName: string;[key: string]: any } {
+
+    const targetStatusRaw = intentArgs?.status ? String(intentArgs.status).trim().toLowerCase().replace(/_/g, " ") : null;
+
     if (listEpics) {
-        const epics = toEpicItems(results);
+        let epics = toEpicItems(results);
+
+        if (targetStatusRaw) {
+            epics = epics.filter((epic) => {
+                const itemStatusRaw = String(epic.status || "").trim().toLowerCase().replace(/_/g, " ");
+                return itemStatusRaw === targetStatusRaw;
+            });
+        }
+
         return {
             type: "epic_list",
-            text: formatEpicList(boardName, epics),
+            text: formatEpicList(boardName, epics, intentArgs?.status),
             boardName,
             epics
         };
     }
 
     if (epicSearch) {
-        const items = toEpicItems(results);
+        let items = toEpicItems(results);
+
+        if (targetStatusRaw) {
+            items = items.filter((item) => {
+                const itemStatusRaw = String(item.status || "").trim().toLowerCase().replace(/_/g, " ");
+                return itemStatusRaw === targetStatusRaw;
+            });
+        }
+
         return {
             type: "epic_search_results",
-            text: formatEpicSearchResults(boardName, epicSearch, items),
+            text: formatEpicSearchResults(boardName, epicSearch, items, intentArgs?.status),
             boardName,
             searchTerm: epicSearch,
             items
@@ -261,26 +158,10 @@ function buildResultsPayload(
 
     let releaseItems = toReleaseItemsWithStatus(results);
 
-    // Filter items if a specific status was requested by the user
-    const targetStatus = intentArgs?.status?.toLowerCase().trim();
-    if (targetStatus) {
+    if (targetStatusRaw) {
         releaseItems = releaseItems.filter((item) => {
-            const itemStatus = item.status.toLowerCase();
-
-            if (targetStatus === "done" || targetStatus === "completed") {
-                return ["done", "completed", "complete", "finished", "shipped", "released", "closed"].some(s => itemStatus.includes(s));
-            }
-            if (targetStatus === "in_progress" || targetStatus === "wip") {
-                return ["in progress", "wip", "ongoing", "doing", "in dev", "in development"].some(s => itemStatus.includes(s));
-            }
-            if (targetStatus === "testing" || targetStatus === "qa") {
-                return ["testing", "uat", "qa", "review", "under review"].some(s => itemStatus.includes(s));
-            }
-            if (targetStatus === "todo") {
-                return ["todo", "to do", "not started", "open", "backlog"].some(s => itemStatus.includes(s));
-            }
-
-            return itemStatus.includes(targetStatus);
+            const itemStatusRaw = String(item.status || "").trim().toLowerCase().replace(/_/g, " ");
+            return itemStatusRaw === targetStatusRaw;
         });
     }
 
@@ -334,15 +215,16 @@ async function main() {
                 });
             }
 
-            const claims = await extractClaimsFromJwt(jwtAssertion);
-            if (!claims || !/^[a-zA-Z0-9_\-]+$/.test(claims.githubId)) {
-                console.warn("Request rejected, token failed verification or claims look invalid.");
+            const user = await authenticateRequest(jwtAssertion);
+
+            if (!user) {
                 return res.status(401).json({
-                    error: "Could not verify user identity. Please sign in again."
+                    error:
+                        "Could not verify user identity. Please sign in again."
                 });
             }
 
-            const { githubId, email } = claims;
+            const { githubId, email } = user;
 
             if (typeof question !== "string" || !question.trim()) {
                 return res.status(400).json({
@@ -350,71 +232,11 @@ async function main() {
                 });
             }
 
-            const [userRows]: any = await dbPool.execute(
-                "SELECT github_id, email FROM ghs_users WHERE github_id = ?",
-                [githubId]
-            );
+            await ensureUserExists(githubId, email);
 
-            if (userRows.length > 0) {
-                if (userRows[0].email !== email) {
-                    await dbPool.execute("UPDATE ghs_users SET email = ? WHERE github_id = ?", [email, githubId]);
-                }
-            } else {
-                try {
-                    await dbPool.execute(
-                        "INSERT INTO ghs_users (github_id, email) VALUES (?, ?)",
-                        [githubId, email]
-                    );
-                } catch (err: any) {
-                    if (err.code === 'ER_DUP_ENTRY') {
-                        const [emailCheck]: any = await dbPool.execute(
-                            "SELECT github_id FROM ghs_users WHERE email = ?",
-                            [email]
-                        );
-
-                        if (emailCheck.length > 0 && emailCheck[0].github_id !== githubId) {
-                            return res.status(409).json({
-                                error: "This email is already linked to another account. Please contact support."
-                            });
-                        }
-                    } else {
-                        throw err;
-                    }
-                }
-            }
-
-            const [sessionRows]: any = await dbPool.execute(
-                "SELECT active_board_name, active_project_id FROM ghs_user_session_state WHERE github_id = ?",
-                [githubId]
-            );
-            const session = sessionRows[0] || null;
-            const activeBoardName: string | null = session?.active_board_name ?? null;
-            const activeProjectId: number | null = session?.active_project_id ?? null;
-
-            async function setActiveBoard(boardName: string, projectId: number) {
-                const safeBoardName = truncateString(boardName, 255);
-
-                await dbPool.execute(
-                    `INSERT INTO ghs_user_session_state (github_id, active_board_name, active_project_id)
-                     VALUES (?, ?, ?)
-                     ON DUPLICATE KEY UPDATE active_board_name = ?, active_project_id = ?`,
-                    [githubId, safeBoardName, projectId, safeBoardName, projectId]
-                );
-
-                await dbPool.execute(
-                    `INSERT INTO ghs_user_project_preferences (github_id, project_id, organization_name, board_name, is_remembered)
-                     VALUES (?, ?, ?, ?, 1)
-                     ON DUPLICATE KEY UPDATE board_name = ?, organization_name = ?, last_accessed_at = CURRENT_TIMESTAMP`,
-                    [githubId, projectId, ownerGroup, safeBoardName, safeBoardName, ownerGroup]
-                );
-            }
-
-            async function clearActiveBoard() {
-                await dbPool.execute(
-                    `DELETE FROM ghs_user_session_state WHERE github_id = ?`,
-                    [githubId]
-                );
-            }
+            const session = await getUserSession(githubId);
+            const activeBoardName = session?.activeBoardName ?? null;
+            const activeProjectId = session?.activeProjectId ?? null;
 
             const intent = await routeIntent(anthropic, question, activeBoardName);
 
@@ -429,38 +251,55 @@ async function main() {
 
             // Handle board switching / keyword search requests
             if (intent.isSwitchingBoard) {
-                if (intent.extractedBoardName) {
-                    const matches = await withTimeout(30000, (signal) =>
-                        findMatchingBoards(client, ownerGroup, intent.extractedBoardName!, signal)
+                if (requiresBoardLookup(intent)) {
+                    const resolution = await withTimeout(
+                        30000,
+                        (signal) =>
+                            resolveBoard(
+                                client,
+                                ownerGroup,
+                                intent.extractedBoardName!,
+                                signal
+                            )
                     );
 
                     // No match found -> ask user to clarify what they need
-                    if (matches.length === 0) {
+                    if (resolution.type === "NONE") {
                         return res.json({
                             type: "board_selection",
-                            text: `I couldn't find any project board matching **"${intent.extractedBoardName}"** under **${ownerGroup}**.\n\nCould you please clarify the board name or try a different keyword?`
+                            text: `I couldn't find any project board matching **"${intent.extractedBoardName}"** under **${ownerGroup}**.`
                         });
                     }
 
                     // Multiple matches found -> display options
-                    if (matches.length > 1) {
-                        const boardListText = matches
-                            .map((m) => `* **${m.title}**`)
-                            .join("\n");
-
+                    if (resolution.type === "MULTIPLE") {
+                        const boardListText = resolution.boards!.map(b => `* **${b.title}**`).join("\n");
                         return res.json({
                             type: "board_selection",
-                            text: `I found ${matches.length} project boards matching **"${intent.extractedBoardName}"**:\n\n${boardListText}\n\nWhich specific board would you like to view?`,
-                            availableBoards: matches.map((m) => m.title),
+                            text: `I found multiple boards matching **"${intent.extractedBoardName}"**:\n\n${boardListText}\n\nWhich board would you like to use?`,
+                            availableBoards: resolution.boards!.map(b => b.title),
                             extractedQuestion: question
                         });
                     }
 
-                    // Exactly 1 match found -> switch board directly
-                    const matchedBoardName = matches[0].title;
-                    const matchedProjectId = matches[0].number;
+                    const matchedBoardName = resolution.board!.title;
+                    const matchedProjectId = resolution.board!.number;
 
-                    await setActiveBoard(matchedBoardName, matchedProjectId);
+                    if (!resolution.board!.confident) {
+                        return res.json({
+                            type: "board_selection",
+                            text: `I found a possible match for **"${intent.extractedBoardName}"** but I'm not certain. Did you mean **${matchedBoardName}**?`,
+                            availableBoards: [matchedBoardName],
+                            extractedQuestion: question
+                        });
+                    }
+
+                    await setActiveBoard(
+                        githubId,
+                        matchedBoardName,
+                        matchedProjectId,
+                        ownerGroup
+                    );
 
                     return res.json({
                         type: "board_acknowledgment",
@@ -470,9 +309,9 @@ async function main() {
                 }
 
                 // Generic switch request without a board keyword
-                await clearActiveBoard();
+                await clearActiveBoard(githubId);
 
-                const savedBoards = await getUserSavedBoards(githubId);
+                const savedBoards = await getSavedBoards(githubId);
                 if (savedBoards.length > 0) {
                     const topSavedBoards = savedBoards.slice(0, 5);
                     const savedListText = topSavedBoards
@@ -499,7 +338,7 @@ async function main() {
             let targetBoardName: string | null = null;
             let targetProjectId: number | null = null;
 
-            if (intent.extractedBoardName) {
+            if (requiresBoardLookup(intent)) {
                 const matches = await withTimeout(30000, (signal) =>
                     findMatchingBoards(client, ownerGroup, intent.extractedBoardName!, signal)
                 );
@@ -525,10 +364,25 @@ async function main() {
                     });
                 }
 
+                // Exactly 1 match found — only auto-switch if it was a
+                if (!matches[0].confident) {
+                    return res.json({
+                        type: "board_selection",
+                        text: `I found a possible match for **"${intent.extractedBoardName}"** but I'm not certain. Did you mean **${matches[0].title}**?`,
+                        availableBoards: [matches[0].title],
+                        extractedQuestion: question
+                    });
+                }
+
                 targetBoardName = matches[0].title;
                 targetProjectId = matches[0].number;
 
-                await setActiveBoard(targetBoardName, targetProjectId);
+                await setActiveBoard(
+                    githubId,
+                    targetBoardName,
+                    targetProjectId,
+                    ownerGroup
+                );
 
                 const hasQueryArgs = Boolean(
                     intent.args?.iteration ||
@@ -552,7 +406,7 @@ async function main() {
             }
 
             if (!targetBoardName || !targetProjectId) {
-                const savedBoards = await getUserSavedBoards(githubId);
+                const savedBoards = await getSavedBoards(githubId);
 
                 if (savedBoards.length > 0) {
                     const topSavedBoards = savedBoards.slice(0, 5);
@@ -577,7 +431,12 @@ async function main() {
                 runTool(client, intent, { owner: ownerGroup, projectNumber: targetProjectId! }, signal)
             );
 
-            await setActiveBoard(targetBoardName, targetProjectId);
+            await setActiveBoard(
+                githubId,
+                targetBoardName,
+                targetProjectId,
+                ownerGroup
+            );
 
             const payload = buildResultsPayload(
                 targetBoardName,

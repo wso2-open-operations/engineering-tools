@@ -17,6 +17,8 @@
 /*
 * This file contains utility functions for formatting chat messages in Markdown format
  */
+import { STATUS_ORDER, STATUS_LABELS, canonicalizeStatus } from "../constants/status";
+
 export interface MultiBoardResult {
     boardName: string;
     releases?: string[];
@@ -45,16 +47,9 @@ function dedupeByTitle<T extends { title: string } | string>(items: T[]): T[] {
     return result;
 }
 
-const STATUS_DISPLAY_ORDER = [
-    "done",
-    "testing/uat",
-    "in progress",
-    "todo",
-    "backlog"
-];
-
 function getStatusRank(status: string): number {
-    return STATUS_DISPLAY_ORDER.indexOf(status.trim().toLowerCase());
+    const canonical = canonicalizeStatus(status);
+    return canonical ? STATUS_ORDER.indexOf(canonical) : -1;
 }
 
 function sortStatusGroups(statuses: string[]): string[] {
@@ -140,8 +135,10 @@ export function formatReleaseList(
 
     text += orderedStatuses
         .map((status) => {
+            const canonical = canonicalizeStatus(status);
+            const display = canonical ? STATUS_LABELS[canonical] : status;
             const titles = grouped.get(status)!;
-            const header = `**${status}** (${titles.length})`;
+            const header = `**${display}** (${titles.length})`;
             const list = titles.map((t) => `* ${t}`).join("\n");
             return `${header}\n${list}`;
         })
@@ -154,16 +151,19 @@ export function formatReleaseList(
 
 export function formatEpicList(
     boardName: string,
-    epics: Array<{ title: string; epicLabel: string | null }>,
+    epics: Array<{ title: string; epicLabel: string | null; status?: string }>,
+    targetStatus?: string | null,
     prefix: string = ""
 ): string {
     const cleanEpics = dedupeByTitle(epics);
 
     if (cleanEpics.length === 0) {
-        return `${prefix}No Epics found on **${boardName}**.`;
+        const statusMsg = targetStatus ? ` with status **"${targetStatus}"**` : "";
+        return `${prefix}No Epics found on **${boardName}**${statusMsg}.`;
     }
 
-    let text = `${prefix}Here are the active Epics on **${boardName}**:\n\n`;
+    const statusHeader = targetStatus ? ` (${targetStatus})` : "";
+    let text = `${prefix}Here are the active Epics${statusHeader} on **${boardName}**:\n\n`;
     text += cleanEpics.map((e) => `* **${e.title}**`).join("\n");
     text += `\n\n_Let me know if you want to inspect items under any of these Epics._`;
 
@@ -173,16 +173,19 @@ export function formatEpicList(
 export function formatEpicSearchResults(
     boardName: string,
     searchTerm: string,
-    items: Array<{ title: string; epicLabel: string | null }>,
+    items: Array<{ title: string; epicLabel: string | null; status?: string }>,
+    targetStatus?: string | null,
     prefix: string = ""
 ): string {
     const cleanItems = dedupeByTitle(items);
 
     if (cleanItems.length === 0) {
-        return `${prefix}No items matched **"${searchTerm}"** on **${boardName}**.`;
+        const statusMsg = targetStatus ? ` with status **"${targetStatus}"**` : "";
+        return `${prefix}No items matched **"${searchTerm}"** on **${boardName}**${statusMsg}.`;
     }
 
-    let text = `${prefix}Here's what matched **"${searchTerm}"** on **${boardName}**:\n\n`;
+    const statusHeader = targetStatus ? ` with status **"${targetStatus}"**` : "";
+    let text = `${prefix}Here's what matched **"${searchTerm}"**${statusHeader} on **${boardName}**:\n\n`;
     text += cleanItems.map((i) => `* **${i.title}**`).join("\n");
     text += `\n\n_Need details on any of these items?_`;
 

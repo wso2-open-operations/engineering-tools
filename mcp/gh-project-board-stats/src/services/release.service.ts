@@ -16,6 +16,7 @@
 
 
 import { getProjectFieldValue } from "./projectItem.service";
+import { canonicalizeStatus } from "../constants/status";
 
 function getLabelNames(item: any): string[] {
     const raw = item?.content?.labels ?? item?.labels ?? [];
@@ -41,6 +42,21 @@ export function getItemStatusText(item: any): string {
     const statusValue = getProjectFieldValue(item, "Status");
     const text = resolveFieldDisplayValue(statusValue).trim();
     return text || "Unspecified";
+}
+
+export function matchesStatusFilter(item: any, targetStatus?: string | null): boolean {
+    if (!targetStatus) return true;
+    const normalizedTarget = canonicalizeStatus(targetStatus);
+    if (!normalizedTarget) return true;
+
+    const itemStatusText = getItemStatusText(item);
+    const normalizedItemStatus = canonicalizeStatus(itemStatusText);
+
+    if (normalizedItemStatus && normalizedTarget) {
+        return normalizedItemStatus === normalizedTarget;
+    }
+
+    return itemStatusText.toLowerCase().trim() === targetStatus.toLowerCase().trim();
 }
 
 function escapeRegExp(val: string): string {
@@ -76,26 +92,31 @@ export function isEpicTypeItem(item: any): boolean {
     const labels = getLabelNames(item);
     return labels.some((label) => {
         const name = label.trim().toLowerCase();
-        return name === "type/epic" || name === "epic" || /^epic\/.+/i.test(name);
+        return name === "type/epic" || name === "epic";
     });
 }
 
 // Determines if the given item is a Release, based on its "Type" field or labels.
 export function isRelease(item: any): boolean {
+    if (!item) return false;
+
     const typeValue = getProjectFieldValue(item, "Type");
     const typeText = resolveFieldDisplayValue(typeValue).toLowerCase().trim();
 
     if (typeText) {
-        return typeText === "feature" || typeText === "enhancement" || typeText === "release";
+        return typeText === "feature" || typeText === "enhancement" || typeText === "release" || typeText === "issue" || typeText === "task";
     }
+
     if (isEpicTypeItem(item)) {
         return false;
     }
 
     const labels = getLabelNames(item);
+    if (labels.length === 0) return true;
+
     return labels.some((label) => {
         const name = label.trim().toLowerCase();
-        return ["feature", "enhancement", "release"].some((keyword) => name.includes(keyword));
+        return ["feature", "enhancement", "release", "type/feature"].some((keyword) => name.includes(keyword)) || /^epic\/.+/i.test(name);
     });
 }
 

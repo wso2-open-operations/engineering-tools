@@ -16,7 +16,15 @@
 
 import { getIterationValue, isMatchingIteration, resolveIterationTargetTitle } from "../services/iteration.service";
 import { getFieldId } from "../services/projectField.service";
-import { isRelease, belongsToFunction, isEpicTypeItem, matchesEpicSearch, getEpicLabelText, getItemStatusText } from "../services/release.service";
+import {
+    isRelease,
+    belongsToFunction,
+    isEpicTypeItem,
+    matchesEpicSearch,
+    getEpicLabelText,
+    getItemStatusText,
+    matchesStatusFilter
+} from "../services/release.service";
 import { dbPool } from "../database/mysql";
 
 interface RuntimeTarget {
@@ -181,6 +189,7 @@ export async function runTool(
     const epicSearch: string | null = route?.args?.epicSearch ?? null;
     const requestedFunction: string | null = route?.args?.function ?? null;
     const requestedIteration: string | undefined = route?.args?.iteration;
+    const requestedStatus: string | null = route?.args?.status ?? null;
 
     let iterationTargetTitle: string | null = null;
     let hasResolvedStandardIteration = false;
@@ -215,20 +224,11 @@ export async function runTool(
         return isMatchingIteration(iterationValue, requestedIteration);
     }
 
-    if (
-        layoutType === "ITERATION_BASED" &&
-        requestedIteration &&
-        STANDARD_ITERATION_KEYS.has(requestedIteration) &&
-        !hasResolvedStandardIteration
-    ) {
-        return [];
-    }
-
     if (listEpics) {
         return allItems.filter((item: any) => {
             if (!isEpicTypeItem(item)) return false;
             if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
-            if (!matchesTimeOrStatusFilter(item)) return false;
+            if (!matchesStatusFilter(item, requestedStatus)) return false;
             return true;
         });
     }
@@ -238,7 +238,7 @@ export async function runTool(
             .filter((item: any) => {
                 if (!matchesEpicSearch(item, epicSearch)) return false;
                 if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
-                if (!matchesTimeOrStatusFilter(item)) return false;
+                if (!matchesStatusFilter(item, requestedStatus)) return false;
                 return true;
             })
             .map((item: any) => ({
@@ -247,9 +247,19 @@ export async function runTool(
             }));
     }
 
+    if (
+        layoutType === "ITERATION_BASED" &&
+        requestedIteration &&
+        STANDARD_ITERATION_KEYS.has(requestedIteration) &&
+        !hasResolvedStandardIteration
+    ) {
+        return [];
+    }
+
     return allItems.filter((item: any) => {
         if (!isRelease(item)) return false;
         if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
+        if (!matchesStatusFilter(item, requestedStatus)) return false;
         if (!matchesTimeOrStatusFilter(item)) return false;
         return true;
     });
