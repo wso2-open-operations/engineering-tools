@@ -77,9 +77,13 @@ export function canonicalizeStatus(raw: string | null | undefined): ItemStatus |
         return STATUS_ALIASES[normalized];
     }
 
+    const tokens = normalized.split(" ");
     for (const key of ALIAS_KEYS_BY_LENGTH) {
-        if (normalized.includes(key)) {
-            return STATUS_ALIASES[key];
+        const keyTokens = key.split(" ");
+        for (let i = 0; i + keyTokens.length <= tokens.length; i++) {
+            if (keyTokens.every((t, j) => tokens[i + j] === t)) {
+                return STATUS_ALIASES[key];
+            }
         }
     }
 

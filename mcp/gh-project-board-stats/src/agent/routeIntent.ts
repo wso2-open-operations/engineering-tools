@@ -127,10 +127,10 @@ Active Context Parameter:
 - Currently Selected Board: ${contextBoardName ?? "NONE (Unknown)"}
 
 Capabilities Supported By This System:
-1. Viewing releases or items scheduled for an iteration/timeframe (e.g., "this week", "next sprint", "previous iteration").
+1. Viewing releases, features, or items scheduled for an iteration/timeframe (e.g., "this week", "next sprint", "previous iteration").
 2. Filtering items by team/function/domain (e.g., "Sales", "People Operations", "Engineering").
-3. Listing epics or features (e.g., "show epics", "list features").
-4. Searching for items under a specific feature or epic name (e.g., "tasks in User Auth epic").
+3. Listing high-level epics or features (e.g., "show epics", "list features", "show feature list").
+4. Searching for items under a specific feature or epic name (e.g., "tasks in User Auth epic", "items under Payment feature").
 5. Filtering items by execution status (e.g., "what's done", "show completed items", "what is in progress").
 6. Switching or querying any project board in the organization.
 
@@ -153,17 +153,12 @@ Classification Rules:
 4. CRITICAL — Extracted Board Target Cleaning Rules:
 - Extract ONLY the core identifier keyword or title phrase into "extractedBoardName".
 - Strip away conversational wrapper words: "board", "boards", "project", "projects", "team", "related", "related to", "show me", "open", "switch to", "regarding", "for", "the", "in", "about".
-- Examples:
-  * "open up HIPAA board" -> "HIPAA"
-  * "what is done on DevPortal feature project?" -> "DevPortal"
-  * "show releases in IAM related boards" -> "IAM"
-  * "switch to Security Team Assignments" -> "Security Team Assignments"
 
 Parameter Extraction Matrix (for "READY" queries):
 - "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if explicitly asked. Otherwise null.
-- "listEpics": Set true ONLY when explicitly asking for Epics/features themselves. Default false.
-- "epicSearch": Target feature/epic name string if searching within a specific epic. Otherwise null.
-- "function": Functional team/component filter ONLY if it is NOT intended as a board target name (e.g., "Sales", "Engineering").
+- "listEpics": Set true when the user asks to LIST high-level Epics or Features (e.g., "list epics", "show epics", "list features", "show features", "get all epics"). Default false.
+- "epicSearch": Extracted feature or epic target name string if searching for items WITHIN/UNDER a specific feature or epic (e.g., "tasks in User Auth", "items under Payment feature"). Otherwise null.
+- "function": Functional team/department filter ONLY if it is a department or team name (e.g., "Sales", "Engineering", "People Ops"). Do NOT map feature/epic names here.
 - "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified.
 
 Strict Output Schema:

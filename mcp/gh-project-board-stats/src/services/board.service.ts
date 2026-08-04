@@ -177,6 +177,8 @@ export async function findMatchingBoards(
         .split(/\s+/)
         .filter((t) => t.length > 1 && !["board", "project", "the", "for", "in"].includes(t));
 
+    if (searchTokens.length === 0) return [];
+
     const tokenMatches = boards.filter((board) => {
         const titleLower = board.title.toLowerCase();
         return searchTokens.every((token) => titleLower.includes(token));

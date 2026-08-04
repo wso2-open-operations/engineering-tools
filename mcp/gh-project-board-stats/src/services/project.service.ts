@@ -78,6 +78,13 @@ export async function ensureUserExists(githubId: string, email: string): Promise
         if (duplicate) {
             throw new Error("EMAIL_ALREADY_LINKED");
         }
-        throw err;
+
+        const existingAfterRace = await getUser(githubId);
+        if (!existingAfterRace) {
+            throw err;
+        }
+        if (existingAfterRace.email !== email) {
+            await updateUserEmail(githubId, email);
+        }
     }
 }
