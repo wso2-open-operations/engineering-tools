@@ -224,21 +224,11 @@ export async function runTool(
         return isMatchingIteration(iterationValue, requestedIteration);
     }
 
-    if (
-        layoutType === "ITERATION_BASED" &&
-        requestedIteration &&
-        STANDARD_ITERATION_KEYS.has(requestedIteration) &&
-        !hasResolvedStandardIteration
-    ) {
-        return [];
-    }
-
     if (listEpics) {
         return allItems.filter((item: any) => {
             if (!isEpicTypeItem(item)) return false;
             if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
             if (!matchesStatusFilter(item, requestedStatus)) return false;
-            if (!matchesTimeOrStatusFilter(item)) return false;
             return true;
         });
     }
@@ -249,13 +239,21 @@ export async function runTool(
                 if (!matchesEpicSearch(item, epicSearch)) return false;
                 if (requestedFunction && !belongsToFunction(item, requestedFunction)) return false;
                 if (!matchesStatusFilter(item, requestedStatus)) return false;
-                if (!matchesTimeOrStatusFilter(item)) return false;
                 return true;
             })
             .map((item: any) => ({
                 ...item,
                 epicLabelText: getEpicLabelText(item)
             }));
+    }
+
+    if (
+        layoutType === "ITERATION_BASED" &&
+        requestedIteration &&
+        STANDARD_ITERATION_KEYS.has(requestedIteration) &&
+        !hasResolvedStandardIteration
+    ) {
+        return [];
     }
 
     return allItems.filter((item: any) => {

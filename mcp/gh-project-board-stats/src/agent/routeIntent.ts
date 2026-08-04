@@ -157,7 +157,7 @@ Classification Rules:
 Parameter Extraction Matrix (for "READY" queries):
 - "status": Normalize to one of ['done', 'in_progress', 'testing', 'todo'] if explicitly asked. Otherwise null.
 - "listEpics": Set true when the user asks to LIST high-level Epics or Features (e.g., "list epics", "show epics", "list features", "show features", "get all epics"). Default false.
-- "epicSearch": Extracted feature or epic target name string if searching for items WITHIN/UNDER a specific feature or epic (e.g., "tasks in User Auth", "items under Payment feature"). Otherwise null.
+- "listEpics": Set true ONLY when the user explicitly asks to list high-level Epic containers (e.g., "list epics", "show all epics", "get epics"). If the user asks for "features", "tasks", or "items" belonging to a specific team or function (e.g., "features on Engineering team"), set "listEpics": false and populate "function".
 - "function": Functional team/department filter ONLY if it is a department or team name (e.g., "Sales", "Engineering", "People Ops"). Do NOT map feature/epic names here.
 - "iteration": Set to "this_week", "next_week", "previous_week", or exact string if specified.
 
