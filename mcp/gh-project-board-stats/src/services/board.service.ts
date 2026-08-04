@@ -3,6 +3,7 @@ import { RoutedIntent } from "../types/intent";
 export interface BoardCandidate {
     number: number;
     title: string;
+    confident: boolean;
 }
 
 export interface BoardResolution {
@@ -13,11 +14,12 @@ export interface BoardResolution {
 
 interface CachedBoards {
     timestamp: number;
-    boards: BoardCandidate[];
+    boards: Array<{ number: number; title: string }>;
 }
 
 const BOARDS_CACHE = new Map<string, CachedBoards>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
 function getMcpResponseText(result: any): string {
     if (!result?.content || !Array.isArray(result.content)) {
         return "";
@@ -37,8 +39,8 @@ function safeJsonParse(text: string): any {
     return JSON.parse(trimmed);
 }
 
-function dedupeBoards(boards: BoardCandidate[]): BoardCandidate[] {
-    const map = new Map<number, BoardCandidate>();
+function dedupeBoards<T extends { number: number }>(boards: T[]): T[] {
+    const map = new Map<number, T>();
     for (const board of boards) {
         if (!map.has(board.number)) {
             map.set(board.number, board);
@@ -52,7 +54,7 @@ export async function getBoards(
     owner: string,
     signal?: AbortSignal,
     forceRefresh = false
-): Promise<BoardCandidate[]> {
+): Promise<Array<{ number: number; title: string }>> {
     const now = Date.now();
     const cached = BOARDS_CACHE.get(owner);
 
@@ -168,7 +170,7 @@ export async function findMatchingBoards(
         (b) => b.title.toLowerCase() === rawSearch
     );
     if (exactMatches.length === 1) {
-        return exactMatches;
+        return exactMatches.map((b) => ({ ...b, confident: true }));
     }
 
     const searchTokens = rawSearch
@@ -181,13 +183,15 @@ export async function findMatchingBoards(
     });
 
     if (tokenMatches.length > 0) {
-        return tokenMatches;
+        return dedupeBoards(tokenMatches.map((b) => ({ ...b, confident: true })));
     }
 
-    return boards.filter((board) => {
+    const partialMatches = boards.filter((board) => {
         const titleLower = board.title.toLowerCase();
         return searchTokens.some((token) => titleLower.includes(token));
     });
+
+    return dedupeBoards(partialMatches.map((b) => ({ ...b, confident: false })));
 }
 
 export async function resolveBoard(

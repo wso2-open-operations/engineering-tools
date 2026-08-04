@@ -27,7 +27,7 @@ import {
     formatEpicList,
     formatEpicSearchResults
 } from "./utils/chatFormatter";
-import { STATUS_ALIASES } from "./constants/status";
+import { canonicalizeStatus } from "./constants/status";
 import { authenticateRequest } from "./services/authentication.service";
 import { getUserSession, setActiveBoard, clearActiveBoard, getSavedBoards } from "./services/session.service";
 import { findMatchingBoards, resolveBoard, requiresBoardLookup } from "./services/board.service";
@@ -107,12 +107,6 @@ function groupByStatus(items: Array<{ title: string; status: string }>): Record<
     return grouped;
 }
 
-function normalizeStatus(value?: string | null) {
-    if (!value) return null;
-
-    return STATUS_ALIASES[value.trim().toLowerCase()] ?? null;
-}
-
 function buildResultsPayload(
     boardName: string,
     results: any[],
@@ -144,15 +138,11 @@ function buildResultsPayload(
 
     let releaseItems = toReleaseItemsWithStatus(results);
 
-    // Filter items if a specific status was requested by the user
-    const targetStatus = intentArgs?.status?.toLowerCase().trim();
-    const normalizedStatus = normalizeStatus(intentArgs?.status);
+    const normalizedStatus = canonicalizeStatus(intentArgs?.status);
 
     if (normalizedStatus) {
-        releaseItems = releaseItems.filter(item => {
-            const itemStatus =
-                normalizeStatus(item.status);
-
+        releaseItems = releaseItems.filter((item) => {
+            const itemStatus = canonicalizeStatus(item.status);
             return itemStatus === normalizedStatus;
         });
     }
@@ -274,9 +264,17 @@ async function main() {
                         });
                     }
 
-                    // Exactly 1 match found -> switch board directly
                     const matchedBoardName = resolution.board!.title;
                     const matchedProjectId = resolution.board!.number;
+
+                    if (!resolution.board!.confident) {
+                        return res.json({
+                            type: "board_selection",
+                            text: `I found a possible match for **"${intent.extractedBoardName}"** but I'm not certain. Did you mean **${matchedBoardName}**?`,
+                            availableBoards: [matchedBoardName],
+                            extractedQuestion: question
+                        });
+                    }
 
                     await setActiveBoard(
                         githubId,
@@ -295,7 +293,8 @@ async function main() {
                 // Generic switch request without a board keyword
                 await clearActiveBoard(githubId);
 
-                const savedBoards = await getSavedBoards(githubId); if (savedBoards.length > 0) {
+                const savedBoards = await getSavedBoards(githubId);
+                if (savedBoards.length > 0) {
                     const topSavedBoards = savedBoards.slice(0, 5);
                     const savedListText = topSavedBoards
                         .map((b) => `* **${b.boardName}**`)
@@ -343,6 +342,16 @@ async function main() {
                         type: "board_selection",
                         text: `I found multiple project boards matching **"${intent.extractedBoardName}"** under **${ownerGroup}**:\n\n${boardListText}\n\nWhich specific board would you like to view?`,
                         availableBoards: matches.map((m) => m.title),
+                        extractedQuestion: question
+                    });
+                }
+
+                // Exactly 1 match found — only auto-switch if it was a
+                if (!matches[0].confident) {
+                    return res.json({
+                        type: "board_selection",
+                        text: `I found a possible match for **"${intent.extractedBoardName}"** but I'm not certain. Did you mean **${matches[0].title}**?`,
+                        availableBoards: [matches[0].title],
                         extractedQuestion: question
                     });
                 }

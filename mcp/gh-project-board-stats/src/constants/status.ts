@@ -5,9 +5,7 @@ export const ITEM_STATUS = {
     TODO: "todo"
 } as const;
 
-export type ItemStatus =
-    typeof ITEM_STATUS[keyof typeof ITEM_STATUS];
-
+export type ItemStatus = typeof ITEM_STATUS[keyof typeof ITEM_STATUS];
 
 export const STATUS_ALIASES: Record<string, ItemStatus> = {
     done: ITEM_STATUS.DONE,
@@ -54,3 +52,36 @@ export const STATUS_ORDER: ItemStatus[] = [
     ITEM_STATUS.IN_PROGRESS,
     ITEM_STATUS.TODO
 ];
+
+const ALIAS_KEYS_BY_LENGTH = Object.keys(STATUS_ALIASES).sort((a, b) => b.length - a.length);
+
+const CANONICAL_VALUES: string[] = Object.values(ITEM_STATUS);
+
+export function canonicalizeStatus(raw: string | null | undefined): ItemStatus | null {
+    if (!raw) return null;
+
+    const cleaned = raw.trim().toLowerCase();
+    if (!cleaned) return null;
+
+    if (CANONICAL_VALUES.includes(cleaned)) {
+        return cleaned as ItemStatus;
+    }
+
+    if (STATUS_ALIASES[cleaned]) {
+        return STATUS_ALIASES[cleaned];
+    }
+
+    const normalized = cleaned.replace(/[/\-_]+/g, " ").replace(/\s+/g, " ").trim();
+
+    if (STATUS_ALIASES[normalized]) {
+        return STATUS_ALIASES[normalized];
+    }
+
+    for (const key of ALIAS_KEYS_BY_LENGTH) {
+        if (normalized.includes(key)) {
+            return STATUS_ALIASES[key];
+        }
+    }
+
+    return null;
+}
