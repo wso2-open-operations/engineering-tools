@@ -116,8 +116,19 @@ function buildResultsPayload(
     listEpics: boolean,
     intentArgs?: any
 ): { type: string; text: string; boardName: string;[key: string]: any } {
+
+    const targetStatusRaw = intentArgs?.status ? String(intentArgs.status).trim().toLowerCase().replace(/_/g, " ") : null;
+
     if (listEpics) {
-        const epics = toEpicItems(results);
+        let epics = toEpicItems(results);
+
+        if (targetStatusRaw) {
+            epics = epics.filter((epic) => {
+                const itemStatusRaw = String(epic.status || "").trim().toLowerCase().replace(/_/g, " ");
+                return itemStatusRaw === targetStatusRaw;
+            });
+        }
+
         return {
             type: "epic_list",
             text: formatEpicList(boardName, epics, intentArgs?.status),
@@ -127,7 +138,15 @@ function buildResultsPayload(
     }
 
     if (epicSearch) {
-        const items = toEpicItems(results);
+        let items = toEpicItems(results);
+
+        if (targetStatusRaw) {
+            items = items.filter((item) => {
+                const itemStatusRaw = String(item.status || "").trim().toLowerCase().replace(/_/g, " ");
+                return itemStatusRaw === targetStatusRaw;
+            });
+        }
+
         return {
             type: "epic_search_results",
             text: formatEpicSearchResults(boardName, epicSearch, items, intentArgs?.status),
@@ -139,12 +158,10 @@ function buildResultsPayload(
 
     let releaseItems = toReleaseItemsWithStatus(results);
 
-    const normalizedStatus = canonicalizeStatus(intentArgs?.status);
-
-    if (normalizedStatus) {
+    if (targetStatusRaw) {
         releaseItems = releaseItems.filter((item) => {
-            const itemStatus = canonicalizeStatus(item.status);
-            return itemStatus === normalizedStatus;
+            const itemStatusRaw = String(item.status || "").trim().toLowerCase().replace(/_/g, " ");
+            return itemStatusRaw === targetStatusRaw;
         });
     }
 
