@@ -160,7 +160,6 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		token, err := jwt.ParseWithClaims(tokenStr, &c, keyFunc,
 			jwt.WithValidMethods([]string{"RS256"}),
 			jwt.WithIssuer(cfg.Issuer),
-			jwt.WithAudience(cfg.Audience),
 			jwt.WithLeeway(cfg.ClockSkew),
 			jwt.WithExpirationRequired(),
 		)
@@ -169,6 +168,14 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		}
 		if !token.Valid {
 			return nil, fmt.Errorf("invalid token")
+		}
+		// AUTH_AUDIENCE is a comma-separated set. Each Asgardeo application
+		// mints its own audience, so a caller such as One WSO2 carries a
+		// different aud than this dashboard's own client. One expected
+		// audience rejected every such token with "token has invalid audience".
+		aud, err := c.GetAudience()
+		if err != nil || !audienceAllowed(aud, allowedAudiences(cfg.Audience)) {
+			return nil, fmt.Errorf("token has invalid audience")
 		}
 	}
 
@@ -191,4 +198,32 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		UserID: userID,
 		Groups: c.Groups,
 	}, nil
+}
+
+// allowedAudiences splits a comma-separated AUTH_AUDIENCE, dropping blanks.
+func allowedAudiences(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// audienceAllowed reports whether the token's aud intersects the configured set.
+// An empty set matches nothing: a missing AUTH_AUDIENCE must not accept every token.
+func audienceAllowed(tokenAud []string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return false
+	}
+	for _, want := range allowed {
+		for _, got := range tokenAud {
+			if got == want {
+				return true
+			}
+		}
+	}
+	return false
 }

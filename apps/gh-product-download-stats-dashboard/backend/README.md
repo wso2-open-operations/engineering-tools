@@ -43,7 +43,7 @@ The server automatically loads `.env` from the working directory on startup
 | `DB_TLS_ENABLED`               | `false` to disable TLS to MySQL (default `true`). The stage/prod DB enforces `require_secure_transport=ON` and rejects plaintext connections, so this must stay `true` there. |
 | `AUTH_JWKS_ENDPOINT`           | JWKS endpoint for JWT signature verification                                                                                                                                  |
 | `AUTH_ISSUER`                  | Expected JWT issuer                                                                                                                                                           |
-| `AUTH_AUDIENCE`                | Expected JWT audience                                                                                                                                                         |
+| `AUTH_AUDIENCE`                | Expected JWT audience. Comma-separated when more than one Asgardeo client calls this API (this dashboard's client id and One WSO2's).                                         |
 | `AUTH_TOKEN_VALIDATOR_ENABLED` | `false` to skip signature verification (local only)                                                                                                                           |
 | `ADMIN_GROUPS`                 | Comma-separated group names allowed to call admin endpoints                                                                                                                   |
 | `PORT`                         | Server listen address (default `:8080`)                                                                                                                                       |
