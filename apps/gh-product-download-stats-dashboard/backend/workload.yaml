@@ -1,0 +1,12 @@
+apiVersion: openchoreo.dev/v1alpha1
+metadata:
+  name: github-product-download-stats-dashboard-backend
+endpoints:
+- name: gh-product-download-stats-dashboard-api
+  displayName: GitHub Product Download Stats Dashboard API
+  port: 8080
+  type: HTTP
+  basePath: /
+  visibility:
+  - external
+  schemaFile: openapi.yaml

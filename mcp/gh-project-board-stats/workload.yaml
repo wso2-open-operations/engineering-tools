@@ -1,0 +1,12 @@
+apiVersion: openchoreo.dev/v1alpha1
+metadata:
+  name: project-management-agent
+endpoints:
+- name: github-project-board-stats-api
+  displayName: GitHub Project Board Stats API
+  port: 8080
+  type: HTTP
+  basePath: /
+  visibility:
+  - external
+  schemaFile: openapi.yaml
